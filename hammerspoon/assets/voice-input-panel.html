@@ -1,0 +1,330 @@
+<!doctype html>
+<meta charset="utf-8">
+<!--
+  超簡單語音輸入 — Mac 選單列面板
+
+  這個檔案由 voice-input-menubar.lua 用 hs.webview:html() 載入，不是從伺服器抓的。
+  四個理由（合起來才完整）：
+    1. 面板要顯示的幾乎都是 Mac 本地狀態（錄音中、經過秒數、本地錯誤），伺服器不知道
+    2. web/index.html 會自己要麥克風並跑 AudioWorklet 錄音器——載進來會多一個錄音器
+       和一個 WKWebView 的麥克風權限提示
+    3. 「連不上 Spark」正是最需要面板的時候，如果面板就是 Spark 的頁面，那會是一片空白
+    4. 開啟瞬間完成，離線也能用
+
+  樣式沿用 web/index.html 的 Shadow VI，兩邊看起來要是同一個產品。
+  字體由 Lua 端把 Anton 的 base64 塞進 @FONT@ —— :html() 的 origin 是 null，
+  跨來源載字體會被 WKWebView 擋掉，所以只能內嵌。
+-->
+<title>超簡單語音輸入</title>
+<style>
+@font-face {
+  font-family: 'Anton';
+  src: url(@FONT@) format('truetype');
+  font-display: swap;
+}
+:root {
+  --ink: #000000;
+  --fg: #ffffff;
+  --steel: #595757;
+  --dim: #999999;
+  --line: #212121;
+  --orange: #EA5504;
+  --display: 'Anton', 'Arial Narrow', sans-serif;
+  --body: 'Noto Sans TC', 'PingFang TC', system-ui, sans-serif;
+}
+* { box-sizing: border-box; -webkit-user-select: none; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--ink); color: var(--fg);
+  font-family: var(--body); font-size: 13px; line-height: 1.6;
+  display: flex; flex-direction: column;
+}
+
+/* 45° 性能斜紋，整個畫面只出現這一次（規範） */
+.stripes {
+  height: 4px; flex: none;
+  background: repeating-linear-gradient(45deg, var(--orange) 0 6px, transparent 6px 12px);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 42%, transparent 88%);
+}
+
+.scroll { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
+
+.head { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
+.head .kicker {
+  margin-left: auto; font-family: var(--display);
+  font-size: 10px; letter-spacing: .28em; color: var(--steel);
+}
+.head .mark { font-family: var(--display); font-size: 13px; letter-spacing: .2em; color: var(--fg); }
+
+.label {
+  font-family: var(--display); font-size: 9px; letter-spacing: .24em;
+  color: var(--steel); margin: 14px 0 6px;
+}
+.card { border: 1px solid var(--line); padding: 12px; }
+
+/* ── 狀態 ── */
+.readout { font-family: var(--display); font-size: 40px; line-height: 1; letter-spacing: .02em; }
+.readout .unit { font-size: 13px; color: var(--steel); margin-left: 4px; letter-spacing: .1em; }
+.state { font-size: 12px; color: var(--dim); margin-top: 4px; }
+.state.live { color: var(--orange); }
+
+/* ── 音量條 ──
+   跟 web/index.html 和桌面小視窗共用同一條 80–16000 的對數軸，
+   所以同一個數字在三個介面上會落在同一個位置。 */
+.meter {
+  position: relative; height: 10px; margin: 12px 0 6px;
+  background: #151515; border: 1px solid var(--line); overflow: hidden;
+}
+.meter-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--steel); }
+.meter-fill.over { background: var(--orange); }
+.meter-mark { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--steel); left: 0; }
+.meter-legend {
+  position: relative; height: 14px;
+  font-family: var(--display); font-size: 9px; letter-spacing: .2em; color: var(--steel);
+}
+.meter-legend .mk { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; color: var(--dim); }
+.caption { font-size: 11px; color: var(--dim); }
+.caption.over { color: var(--orange); }
+
+/* ── 結果 ── */
+.result { font-size: 14px; color: var(--fg); -webkit-user-select: text; word-break: break-word; }
+.result.empty { color: var(--steel); }
+.meta { font-size: 11px; color: var(--steel); margin-top: 6px; }
+.btnrow { display: flex; gap: 6px; margin-top: 10px; }
+button {
+  font-family: var(--body); font-size: 12px; color: var(--fg);
+  background: transparent; border: 1px solid var(--line); border-radius: 0;
+  padding: 5px 10px; cursor: pointer;
+}
+button:hover { border-color: var(--steel); }
+button:disabled { color: var(--steel); cursor: default; }
+button.primary { border-color: var(--orange); }
+
+/* ── 閘門統計 ── */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 11px; }
+.kv dt { font-family: var(--display); letter-spacing: .16em; color: var(--steel); }
+.kv dd { margin: 0; color: var(--dim); }
+.raw { font-size: 10px; color: var(--steel); word-break: break-all; white-space: pre-wrap; max-height: 90px; overflow: auto; }
+
+/* ── 歷史 ── */
+.row { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.row:hover { background: #0a0a0a; }
+.row .t { font-family: var(--display); font-size: 10px; color: var(--steel); flex: none; padding-top: 2px; }
+.row .src { flex: none; font-size: 10px; padding-top: 2px; }
+.row .x { flex: 1; font-size: 12px; word-break: break-word; }
+
+/* ── 設定 ── */
+.opt { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.opt .name { flex: 1; }
+.opt .sub { font-size: 10px; color: var(--steel); }
+.opt input[type=checkbox] { accent-color: var(--orange); width: 15px; height: 15px; }
+input[type=text] {
+  background: #0a0a0a; border: 1px solid var(--line); color: var(--fg);
+  font-family: var(--body); font-size: 12px; padding: 4px 6px; width: 100%;
+  -webkit-user-select: text;
+}
+
+.foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; border-top: 1px solid var(--line);
+  font-family: var(--display); font-size: 9px; letter-spacing: .2em; color: var(--steel);
+}
+.foot .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--steel); }
+.foot .dot.ok { background: var(--orange); }
+.foot .who { margin-left: auto; letter-spacing: .1em; }
+</style>
+
+<div class="stripes"></div>
+<div class="scroll">
+  <div class="head">
+    <span class="mark">SHADOW</span>
+    <span class="kicker">VOICE INPUT · MAC</span>
+  </div>
+
+  <div class="label">STATUS</div>
+  <div class="card">
+    <div class="readout"><span id="big">—</span><span class="unit" id="unit"></span></div>
+    <div class="state" id="state">待命</div>
+
+    <div class="meter">
+      <div class="meter-fill" id="fill"></div>
+      <div class="meter-mark" id="mark"></div>
+    </div>
+    <div class="meter-legend"><span class="mk" id="mklabel"></span></div>
+    <div class="caption" id="caption">還沒有量測值。口述一次之後會顯示。</div>
+  </div>
+
+  <div class="label">RESULT</div>
+  <div class="card">
+    <div class="result empty" id="result">還沒有辨識結果</div>
+    <div class="meta" id="meta"></div>
+    <div class="btnrow">
+      <button id="copy" disabled>複製</button>
+      <button id="repaste" disabled>重新貼上</button>
+      <button id="rec" class="primary">開始錄音</button>
+    </div>
+  </div>
+
+  <div class="label">GATE</div>
+  <div class="card">
+    <dl class="kv" id="kv"></dl>
+    <div class="raw" id="raw"></div>
+  </div>
+
+  <div class="label">LOG</div>
+  <div class="card" id="log"><div class="result empty">還沒有記錄</div></div>
+
+  <div class="label">SETTINGS</div>
+  <div class="card">
+    <div class="opt">
+      <div class="name">每次輸入後補一個空白<div class="sub">TRAILING_SPACE</div></div>
+      <input type="checkbox" id="trailing">
+    </div>
+    <div class="opt">
+      <div class="name">辨識伺服器<div class="sub">改完立即生效</div></div>
+    </div>
+    <input type="text" id="server" spellcheck="false">
+    <div class="opt">
+      <div class="name" style="color:var(--steel);font-size:11px">
+        靈敏度門檻是三個介面共用的一個全域值，在 Spark 的小視窗調整。
+        在這裡改會連帶影響桌機口述和手機版。
+      </div>
+    </div>
+    <div class="btnrow"><button id="openweb">開啟網頁版</button><button id="update">檢查更新</button></div>
+  </div>
+</div>
+
+<div class="foot">
+  <span class="dot" id="dot"></span><span id="health">檢查中…</span>
+  <span class="who" id="who"></span>
+</div>
+
+<script>
+// Lua → 頁面：VI.push(state)。頁面只做渲染，不自己抓資料——
+// 所有的取得邏輯都在 Lua，這裡拿到什麼畫什麼。
+// 頁面 → Lua：window.webkit.messageHandlers.vi.postMessage({action:…})
+const $ = id => document.getElementById(id);
+const send = o => { try { window.webkit.messageHandlers.vi.postMessage(o); } catch (e) {} };
+
+const AXIS_MIN = 80, AXIS_MAX = 16000;
+const axisPos = v => {
+  if (!v || v <= 0) return 0;
+  const lo = Math.log(AXIS_MIN), hi = Math.log(AXIS_MAX);
+  const x = (Math.log(Math.max(AXIS_MIN, Math.min(AXIS_MAX, v))) - lo) / (hi - lo);
+  return Math.max(0, Math.min(1, x));
+};
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let lastText = '';
+
+window.VI = {
+  push(s) {
+    // ── 狀態 ──
+    const ph = s.phase || 'idle';
+    if (ph === 'recording') {
+      $('big').textContent = (s.elapsed || 0).toFixed(1);
+      $('unit').textContent = 'S';
+      $('state').textContent = '收音中';
+      $('state').className = 'state live';
+      $('rec').textContent = '停止並辨識';
+    } else if (ph === 'transcribing') {
+      $('big').textContent = '···';
+      $('unit').textContent = '';
+      $('state').textContent = '辨識中';
+      $('state').className = 'state';
+      $('rec').textContent = '辨識中…';
+    } else {
+      const sec = s.last && s.last.seconds;
+      $('big').textContent = sec ? sec.toFixed(2) : '—';
+      $('unit').textContent = sec ? 'S' : '';
+      $('state').textContent = '待命';
+      $('state').className = 'state';
+      $('rec').textContent = '開始錄音';
+    }
+
+    // ── 音量條：門檻刻度 + 上次量到的 p95 ──
+    // 刻意標成「上次量到」而不是即時。Mac 上 sox 獨佔麥克風、不回報音量，
+    // 桌面版那條即時儀表是 voice-input-autostop 每 100ms 餵的，這裡沒有對應的東西。
+    const thold = s.threshold;
+    if (thold) {
+      $('mark').style.left = (axisPos(thold) * 100) + '%';
+      $('mklabel').style.left = (axisPos(thold) * 100) + '%';
+      $('mklabel').textContent = '門檻 ' + thold;
+    }
+    const g = s.last && s.last.gate;
+    if (g && g.p95 != null) {
+      const over = thold ? g.p95 >= thold : false;
+      $('fill').style.width = (axisPos(g.p95) * 100) + '%';
+      $('fill').className = 'meter-fill' + (over ? ' over' : '');
+      $('caption').textContent = '上次量到 ' + g.p95 + (over ? ' · 高於門檻' : ' · 低於門檻，會被擋下');
+      $('caption').className = 'caption' + (over ? ' over' : '');
+    }
+
+    // ── 結果 ──
+    const r = s.last;
+    if (r && r.kind === 'ok') {
+      lastText = r.text;
+      $('result').textContent = r.text;
+      $('result').className = 'result';
+      $('meta').textContent = r.seconds ? ('辨識耗時 ' + r.seconds.toFixed(2) + ' 秒') : '';
+      $('copy').disabled = false; $('repaste').disabled = false;
+    } else if (r) {
+      lastText = '';
+      $('result').textContent = r.reason || '沒有辨識到內容';
+      $('result').className = 'result empty';
+      $('meta').textContent = '';
+      $('copy').disabled = true; $('repaste').disabled = true;
+    }
+
+    // ── 閘門統計 ──
+    // 解析失敗時顯示原始字串。那行字是 speech-gate.py 印給人看的 stderr，
+    // 從來不是 API，格式改了要退化成「還看得懂」而不是空白。
+    if (g) {
+      if (g.p95 != null) {
+        $('kv').innerHTML =
+          '<dt>P95</dt><dd>' + g.p95 + (g.needP95 ? ' （需 ≥ ' + g.needP95 + '）' : '') + '</dd>' +
+          '<dt>FLOOR</dt><dd>' + (g.floor ?? '—') + '</dd>' +
+          '<dt>RATIO</dt><dd>' + (g.ratio ?? '—') + (g.needRatio ? ' （需 ≥ ' + g.needRatio + '）' : '') + '</dd>';
+        $('raw').textContent = '';
+      } else {
+        $('kv').innerHTML = '';
+        $('raw').textContent = g.raw || '';
+      }
+    }
+
+    // ── 歷史 ──
+    if (s.history) {
+      $('log').innerHTML = s.history.length ? s.history.map(it => {
+        const src = String(it.src || '');
+        const badge = src.startsWith('mac') ? '💻' : (src.startsWith('web') ? '🌐' : '　');
+        return '<div class="row" data-t="' + esc(it.text) + '">' +
+               '<span class="t">' + esc((it.ts || '').slice(11, 16)) + '</span>' +
+               '<span class="src">' + badge + '</span>' +
+               '<span class="x">' + esc(it.text) + '</span></div>';
+      }).join('') : '<div class="result empty">還沒有記錄</div>';
+      [...document.querySelectorAll('.row')].forEach(el =>
+        el.onclick = () => send({action: 'copy', text: el.dataset.t}));
+    }
+
+    // ── 連線與設定 ──
+    if (s.health !== undefined) {
+      $('dot').className = 'dot' + (s.health ? ' ok' : '');
+      $('health').textContent = s.health ? '已連線 SPARK' : (s.healthError || '連不上 SPARK');
+      $('who').textContent = s.who && s.who !== 'unknown' ? s.who : '';
+    }
+    if (s.config) {
+      if (document.activeElement !== $('server')) $('server').value = s.config.SERVER || '';
+      $('trailing').checked = s.config.TRAILING_SPACE === '1';
+    }
+  }
+};
+
+$('copy').onclick    = () => send({action: 'copy', text: lastText});
+$('repaste').onclick = () => send({action: 'repaste', text: lastText});
+$('rec').onclick     = () => send({action: 'toggleRecord'});
+$('openweb').onclick = () => send({action: 'openWeb'});
+$('update').onclick  = () => send({action: 'checkUpdate'});
+$('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
+$('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e.target.value.trim()});
+</script>

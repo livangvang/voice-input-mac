@@ -35,6 +35,25 @@ PIDFILE="${RUN}/rec.pid"
 WAV="${RUN}/rec.wav"
 LOG="${RUN}/last.log"
 
+# ---------- 給選單列前端讀的狀態檔 ----------
+# 為什麼需要這些：pidfile 在辨識開始前就被 mv 走了（見 stop_and_transcribe 的
+# 搶佔邏輯），所以「已停止錄音、正在辨識」這段時間磁碟上沒有任何標記，
+# 前端分不出「辨識中」和「待命」。
+#
+# 刻意**不讓 bash 自己組 JSON**：辨識文字裡什麼引號和換行都可能有，
+# 手工跳脫是保證會爆的。改成把伺服器原封不動的回應寫出去，前端直接 decode。
+PHASE="${RUN}/phase"        # 一個字：recording / transcribing / idle
+LAST="${RUN}/last.json"     # /api/transcribe 的原始回應
+NOTE="${RUN}/last.note"     # 純文字，給伺服器不知道的本地狀況
+
+# 原子寫入：每 100ms 讀一次的檔案，直接覆寫遲早會被讀到寫到一半的狀態
+_atomic_write() {
+    printf '%s' "$2" > "${1}.tmp" 2>/dev/null && mv -f "${1}.tmp" "$1" 2>/dev/null
+    return 0
+}
+set_phase() { _atomic_write "$PHASE" "$1"; }
+note()      { _atomic_write "$NOTE" "$1"; }
+
 notify() {
     if command -v terminal-notifier >/dev/null 2>&1; then
         terminal-notifier -title "超簡單語音輸入" -message "$1" -group voice-input 2>/dev/null
@@ -44,35 +63,30 @@ notify() {
     return 0
 }
 
-die() { notify "❌ $1"; echo "voice-input: $1" >&2; exit 1; }
+die() { note "❌ $1"; notify "❌ $1"; echo "voice-input: $1" >&2; exit 1; }
 
 # ---------- 開始錄音 ----------
 start_recording() {
     command -v sox >/dev/null 2>&1 || die "找不到 sox，請執行 brew install sox"
 
-    rm -f "$WAV"
-    # 16kHz 單聲道 16-bit，跟伺服器期待的格式一致。
-    #
-    # 關鍵修正：pidfile 必須寫「sox 本尊」的 pid。
-    # 以前是外層再包一個子殼做逾時，pidfile 記的是那層子殼的 pid——但那層會
-    # 被 hs.task 在主腳本結束時收掉，底下的 sox 卻被孤兒化、繼續錄。結果
-    # recording() 檢查到的是死掉的子殼 pid，永遠判定「沒在錄」→ 停止不觸發、
-    # 錄音關不掉。改成在子殼內把 sox 自己的 pid 寫進 pidfile；逾時改用 sox
-    # 內建的 trim 效果（錄滿 MAX_SECONDS 自動收尾），不再需要看門狗子殼。
-    #
-    # 另一個關鍵：背景子殼的 stdin/stdout/stderr 必須跟呼叫端（hs.task）斷開，
-    # 全部導到 /dev/null。否則背景的 sox/子殼會一直握著 hs.task 的輸出管道，
-    # hs.task 收不到 EOF、遲遲不結束，連帶把 Hammerspoon 的事件迴圈整個拖住——
-    # 錄音期間所有 eventtap（雙擊 Ctrl、任意鍵停止）全部凍結，於是「開始得了、
-    # 停不下來」。斷開之後 hs.task 立刻結束，事件迴圈恢復，停止才收得到。
-    (
-        sox -d -r 16000 -c 1 -b 16 -e signed-integer "$WAV" trim 0 "$MAX_SECONDS" \
-            >/dev/null 2>"$LOG" &
-        echo $! > "$PIDFILE"
-        wait
-    ) </dev/null >/dev/null 2>&1 &
-    disown 2>/dev/null || true
+    rm -f "$WAV" "$NOTE"
+    # 16kHz 單聲道 16-bit，跟伺服器期待的格式一致
+    ( timeout_cmd "$MAX_SECONDS" sox -d -r 16000 -c 1 -b 16 -e signed-integer "$WAV" \
+        >/dev/null 2>"$LOG" ) &
+    echo $! > "$PIDFILE"
+    set_phase recording
     notify "🎤 錄音中…（再按一次熱鍵結束）"
+}
+
+# macOS 沒有 GNU timeout，用背景 sleep 當看門狗
+timeout_cmd() {
+    local secs="$1"; shift
+    "$@" &
+    local pid=$!
+    ( sleep "$secs"; kill -INT "$pid" 2>/dev/null ) &
+    local watchdog=$!
+    wait "$pid" 2>/dev/null
+    kill "$watchdog" 2>/dev/null
 }
 
 # ---------- 停止錄音並辨識 ----------
@@ -82,6 +96,12 @@ stop_and_transcribe() {
     mv "$PIDFILE" "$claim" 2>/dev/null || exit 0
     local pid; pid="$(cat "$claim" 2>/dev/null)"
     rm -f "$claim"
+
+    # 搶到處理權之後、pidfile 已經不在了，所以從這裡開始要靠 phase 表示狀態。
+    # trap 掛在 EXIT 上而不是每個 return 前各寫一次：這個函式有七八個提早結束的
+    # 出口（die、錄音太短、閘門擋下…），漏掉任何一個都會讓選單列永遠卡在「辨識中」。
+    trap 'set_phase idle' EXIT
+    set_phase transcribing
 
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         # 連子行程一起收：sox 是 timeout_cmd 的子行程，只殺父的話會留下孤兒
@@ -98,19 +118,31 @@ stop_and_transcribe() {
 
     [ -s "$WAV" ] || die "沒有錄到聲音（系統設定 → 隱私權 → 麥克風）"
 
-    local bytes; bytes="$(stat -f %z "$WAV" 2>/dev/null || stat -c %s "$WAV")"
+    # 用 wc -c 而不是 stat：BSD 的 `stat -f` 是格式字串，GNU 的 `-f` 卻是
+    # 「顯示檔案系統狀態」而且會成功回傳 0——所以 `stat -f … || stat -c …`
+    # 這種寫法在 Linux 上永遠走不到退路，$bytes 會變成一整段檔案系統資訊。
+    # 這支腳本只在 macOS 跑，但保持可攜才能在 Linux 上驗證它的狀態機。
+    local bytes; bytes="$(wc -c < "$WAV" 2>/dev/null | tr -d ' ')"
+    [ -n "$bytes" ] || bytes=0
     if [ "$bytes" -lt "$MIN_BYTES" ]; then
-        notify "⚠️ 錄音太短，已略過"; exit 0
+        note "⚠️ 錄音太短，已略過"; notify "⚠️ 錄音太短，已略過"; exit 0
     fi
 
     notify "⏳ 辨識中…"
 
+    # X-Voice-Input-Client 讓伺服器把來源記成 mac:… 而不是 web:…。
+    # 沒有這個標頭的話，Mac 的辨識在歷史裡跟手機 PWA 長得一模一樣，
+    # 選單列面板的歷史會顯示「什麼都來自網頁版」。舊客戶端不送，向後相容。
     local resp
     resp="$(curl -s -m 60 -X POST --data-binary @"$WAV" \
-                -H "Content-Type: audio/wav" "${SERVER}/api/transcribe" 2>"$LOG")"
+                -H "Content-Type: audio/wav" \
+                -H "X-Voice-Input-Client: mac" "${SERVER}/api/transcribe" 2>"$LOG")"
     if [ -z "$resp" ]; then
         die "連不上 ${SERVER}（Tailscale 有連線嗎？MagicDNS 開了嗎？）"
     fi
+    # 原封不動寫出去：這是合法 JSON，前端 decode 就有 text/seconds/gate/reason
+    _atomic_write "$LAST" "$resp"
+    rm -f "$NOTE"          # 有伺服器回應了，本地訊息就過期了
 
     # 伺服器可能回三種：{text:…} 成功 / {skipped:true,reason:…} 被閘門擋下 / {error:…}
     local text skipped err
@@ -142,60 +174,15 @@ except Exception: pass
 }
 
 # ---------- 貼進目前的 App ----------
-#
-# 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式。
-#
-# 以前這裡是「pbcopy 完立刻叫 System Events 打 Cmd+V」，結果會間歇性整句吃掉——
-# 伺服器辨識成功、歷史裡看得到，畫面上就是沒字。兩個原因，都是競態：
-#
-#   1. 停止錄音最順手的動作就是按 Ctrl，而送 Cmd+V 的那一瞬間 Ctrl 往往還按著。
-#      System Events 的 keystroke 會被實體按著的修飾鍵疊上去，實際送出的是
-#      Ctrl+Cmd+V——沒有 App 認得這個組合，字就這樣沒了。這也正是「再按一次就好」
-#      的由來：第二次手指已經離開 Ctrl。
-#   2. pbcopy 回來不代表 pasteboard 已經更新完，緊接著的 Cmd+V 可能貼到舊內容。
-#
-# 現在改成：確認剪貼簿真的寫進去 → 等修飾鍵全部放開 → 才送 Cmd+V。
 emit() {
     local text="$1"
     local old; old="$(pbpaste 2>/dev/null)"
 
     printf '%s' "$text" | pbcopy
-
-    # 等 pasteboard 真的拿到新內容（最多 0.5 秒）
-    for _ in $(seq 1 10); do
-        [ "$(pbpaste 2>/dev/null)" = "$text" ] && break
-        sleep 0.05
-    done
-
-    wait_modifiers_released
-    paste_now
-
-    # 還原剪貼簿。原本的 1 秒對瀏覽器、Notion 這種慢一點的 App 不夠，
-    # 常常在貼上真正發生之前就換回舊內容了。
-    ( sleep 3; printf '%s' "$old" | pbcopy ) >/dev/null 2>&1 &
-}
-
-# 等 Ctrl/Cmd/Alt/Shift/fn 都放開，最多等約 1.5 秒。
-# 刻意不看 capslock——它鎖著的時候會永遠是 true，每次都白等滿。
-# 每次 hs -c 本身就要幾十毫秒，所以不另外加 sleep；手指沒按著的話第一次就過。
-wait_modifiers_released() {
-    command -v hs >/dev/null 2>&1 || { sleep 0.3; return; }
-    for _ in $(seq 1 20); do
-        [ "$(hs -c 'local f = hs.eventtap.checkKeyboardModifiers()
-                    if f.ctrl or f.cmd or f.alt or f.shift or f.fn then return "held" end
-                    return "clear"' 2>/dev/null)" = "clear" ] && return
-        sleep 0.03
-    done
-}
-
-# 送 Cmd+V。優先走 Hammerspoon 的 eventtap：flags 是我們自己指定的，比較乾淨；
-# 沒有 hs（或 IPC 沒通）就退回 osascript。
-paste_now() {
-    if command -v hs >/dev/null 2>&1 &&
-       [ "$(hs -c 'hs.eventtap.keyStroke({"cmd"}, "v"); return "ok"' 2>/dev/null)" = "ok" ]; then
-        return
-    fi
+    # 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式
     osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"
+
+    ( sleep 1; printf '%s' "$old" | pbcopy ) >/dev/null 2>&1 &
 }
 
 # 把 /api/history 的 JSON 印成人看的格式
@@ -227,11 +214,20 @@ case "${1:-toggle}" in
     cancel)
         pid="$(cat "$PIDFILE" 2>/dev/null)"
         [ -n "$pid" ] && { pkill -KILL -P "$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; }
-        rm -f "$PIDFILE" "$WAV"
+        rm -f "$PIDFILE" "$WAV" "$NOTE"
+        set_phase idle
         notify "🚫 已取消" ;;
     status)
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
             echo recording; else echo idle; fi ;;
+    state)
+        # 選單列前端讀的就是這些檔案。做成子指令是為了讓那個契約
+        # 不必開 Hammerspoon 也測得到——Lua 那邊只是換個方式讀同樣的東西。
+        printf 'phase\t%s\n' "$(cat "$PHASE" 2>/dev/null || echo idle)"
+        printf 'pidfile\t%s\n' "$([ -f "$PIDFILE" ] && echo yes || echo no)"
+        printf 'note\t%s\n' "$(cat "$NOTE" 2>/dev/null)"
+        printf 'last\t%s\n' "$(cat "$LAST" 2>/dev/null)"
+        ;;
     ping)
         if curl -s -m 5 -o /dev/null "${SERVER}/api/health"; then
             echo "✅ 連得到 ${SERVER}"
@@ -244,6 +240,6 @@ case "${1:-toggle}" in
     history) curl -s -m 10 "${SERVER}/api/history" | json_list ;;
     log)     cat "$LOG" 2>/dev/null || echo "(還沒有 log)" ;;
     *)
-        echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|ping|history|log]" >&2
+        echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|state|ping|history|log]" >&2
         exit 2 ;;
 esac

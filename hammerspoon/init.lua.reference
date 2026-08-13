@@ -2,3 +2,6 @@
 -- 超簡單語音輸入
 require("hs.ipc")   -- 讓 `hs` 命令列工具能連進來(除錯/檢查權限用)
 dofile(os.getenv("HOME") .. "/.hammerspoon/voice-input.lua")
+
+-- 超簡單語音輸入（選單列）
+require("voice-input-menubar")
