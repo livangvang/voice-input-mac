@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# voice-input-mac — 超簡單語音輸入的 macOS 客戶端
+#
+#   第 1 次呼叫：開始錄音
+#   第 2 次呼叫：停止錄音 → 上傳到 Spark 辨識 → 貼進目前的 App
+#
+# 安裝：curl -fsSL https://spark-cb4e.taild73ae6.ts.net/mac/install.sh | bash
+# 設定檔：~/.config/voice-input/config（可省略）
+#
+# ## 它只做「錄音」和「貼上」，其他全部在伺服器上
+#
+# 這支腳本把 wav 丟給 Spark 的 /api/transcribe，那支 API 會依序做：
+#   能量閘門 → whisper 辨識（含詞彙表提示詞）→ opencc 轉繁 → 常用詞校正 → 寫入歷史
+#
+# 以前這裡是直接打 whisper-server 的 8089，結果 Mac 版少了一整排東西——
+# 沒有能量閘門（安靜時會幻覺出整句話）、沒有校正表、辨識歷史也不會同步。
+# 改成走 API 之後這些全部自動跟上，而且 Mac 端還少裝一個 opencc。
+
+set -uo pipefail
+
+CONF="${HOME}/.config/voice-input/config"
+
+# ---------- 預設值 ----------
+# 用 MagicDNS 名字而不是 IP：憑證是簽給這個名字的，用 IP 會憑證不符。
+SERVER="https://spark-cb4e.taild73ae6.ts.net"
+MAX_SECONDS=180
+TRAILING_SPACE=0
+MIN_BYTES=16000          # 太短的錄音不用上傳
+
+[ -f "$CONF" ] && . "$CONF"
+
+RUN="${TMPDIR:-/tmp}/voice-input"
+mkdir -p "$RUN"
+PIDFILE="${RUN}/rec.pid"
+WAV="${RUN}/rec.wav"
+LOG="${RUN}/last.log"
+
+notify() {
+    if command -v terminal-notifier >/dev/null 2>&1; then
+        terminal-notifier -title "超簡單語音輸入" -message "$1" -group voice-input 2>/dev/null
+    else
+        osascript -e "display notification \"${1//\"/\\\"}\" with title \"超簡單語音輸入\"" 2>/dev/null
+    fi
+    return 0
+}
+
+die() { notify "❌ $1"; echo "voice-input: $1" >&2; exit 1; }
+
+# ---------- 開始錄音 ----------
+start_recording() {
+    command -v sox >/dev/null 2>&1 || die "找不到 sox，請執行 brew install sox"
+
+    rm -f "$WAV"
+    # 16kHz 單聲道 16-bit，跟伺服器期待的格式一致。
+    #
+    # 關鍵修正：pidfile 必須寫「sox 本尊」的 pid。
+    # 以前是外層再包一個子殼做逾時，pidfile 記的是那層子殼的 pid——但那層會
+    # 被 hs.task 在主腳本結束時收掉，底下的 sox 卻被孤兒化、繼續錄。結果
+    # recording() 檢查到的是死掉的子殼 pid，永遠判定「沒在錄」→ 停止不觸發、
+    # 錄音關不掉。改成在子殼內把 sox 自己的 pid 寫進 pidfile；逾時改用 sox
+    # 內建的 trim 效果（錄滿 MAX_SECONDS 自動收尾），不再需要看門狗子殼。
+    #
+    # 另一個關鍵：背景子殼的 stdin/stdout/stderr 必須跟呼叫端（hs.task）斷開，
+    # 全部導到 /dev/null。否則背景的 sox/子殼會一直握著 hs.task 的輸出管道，
+    # hs.task 收不到 EOF、遲遲不結束，連帶把 Hammerspoon 的事件迴圈整個拖住——
+    # 錄音期間所有 eventtap（雙擊 Ctrl、任意鍵停止）全部凍結，於是「開始得了、
+    # 停不下來」。斷開之後 hs.task 立刻結束，事件迴圈恢復，停止才收得到。
+    (
+        sox -d -r 16000 -c 1 -b 16 -e signed-integer "$WAV" trim 0 "$MAX_SECONDS" \
+            >/dev/null 2>"$LOG" &
+        echo $! > "$PIDFILE"
+        wait
+    ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    notify "🎤 錄音中…（再按一次熱鍵結束）"
+}
+
+# ---------- 停止錄音並辨識 ----------
+stop_and_transcribe() {
+    # 用原子性的 rename 搶下處理權，避免重複觸發時辨識兩次（同 Linux 版）
+    local claim="${RUN}/rec.claimed"
+    mv "$PIDFILE" "$claim" 2>/dev/null || exit 0
+    local pid; pid="$(cat "$claim" 2>/dev/null)"
+    rm -f "$claim"
+
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        # 連子行程一起收：sox 是 timeout_cmd 的子行程，只殺父的話會留下孤兒
+        pkill -INT -P "$pid" 2>/dev/null
+        kill -INT "$pid" 2>/dev/null
+        for _ in $(seq 1 20); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        pkill -KILL -P "$pid" 2>/dev/null
+        kill -KILL "$pid" 2>/dev/null
+    fi
+    sleep 0.2
+
+    [ -s "$WAV" ] || die "沒有錄到聲音（系統設定 → 隱私權 → 麥克風）"
+
+    local bytes; bytes="$(stat -f %z "$WAV" 2>/dev/null || stat -c %s "$WAV")"
+    if [ "$bytes" -lt "$MIN_BYTES" ]; then
+        notify "⚠️ 錄音太短，已略過"; exit 0
+    fi
+
+    notify "⏳ 辨識中…"
+
+    local resp
+    resp="$(curl -s -m 60 -X POST --data-binary @"$WAV" \
+                -H "Content-Type: audio/wav" "${SERVER}/api/transcribe" 2>"$LOG")"
+    if [ -z "$resp" ]; then
+        die "連不上 ${SERVER}（Tailscale 有連線嗎？MagicDNS 開了嗎？）"
+    fi
+
+    # 伺服器可能回三種：{text:…} 成功 / {skipped:true,reason:…} 被閘門擋下 / {error:…}
+    local text skipped err
+    text="$(json_get "$resp" text)"
+    skipped="$(json_get "$resp" reason)"
+    err="$(json_get "$resp" error)"
+
+    [ -n "$err" ] && die "$err"
+    if [ -z "$text" ]; then
+        notify "⚠️ ${skipped:-沒有辨識到內容}"; exit 0
+    fi
+
+    [ "$TRAILING_SPACE" = "1" ] && text="${text} "
+    emit "$text"
+    notify "✅ ${text:0:60}"
+}
+
+# 取 JSON 欄位。有 jq 就用 jq，沒有就退回 python3（macOS 內建）。
+json_get() {
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // empty' 2>/dev/null
+    else
+        printf '%s' "$1" | python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('$2','') or '')
+except Exception: pass
+" 2>/dev/null
+    fi
+}
+
+# ---------- 貼進目前的 App ----------
+#
+# 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式。
+#
+# 以前這裡是「pbcopy 完立刻叫 System Events 打 Cmd+V」，結果會間歇性整句吃掉——
+# 伺服器辨識成功、歷史裡看得到，畫面上就是沒字。兩個原因，都是競態：
+#
+#   1. 停止錄音最順手的動作就是按 Ctrl，而送 Cmd+V 的那一瞬間 Ctrl 往往還按著。
+#      System Events 的 keystroke 會被實體按著的修飾鍵疊上去，實際送出的是
+#      Ctrl+Cmd+V——沒有 App 認得這個組合，字就這樣沒了。這也正是「再按一次就好」
+#      的由來：第二次手指已經離開 Ctrl。
+#   2. pbcopy 回來不代表 pasteboard 已經更新完，緊接著的 Cmd+V 可能貼到舊內容。
+#
+# 現在改成：確認剪貼簿真的寫進去 → 等修飾鍵全部放開 → 才送 Cmd+V。
+emit() {
+    local text="$1"
+    local old; old="$(pbpaste 2>/dev/null)"
+
+    printf '%s' "$text" | pbcopy
+
+    # 等 pasteboard 真的拿到新內容（最多 0.5 秒）
+    for _ in $(seq 1 10); do
+        [ "$(pbpaste 2>/dev/null)" = "$text" ] && break
+        sleep 0.05
+    done
+
+    wait_modifiers_released
+    paste_now
+
+    # 還原剪貼簿。原本的 1 秒對瀏覽器、Notion 這種慢一點的 App 不夠，
+    # 常常在貼上真正發生之前就換回舊內容了。
+    ( sleep 3; printf '%s' "$old" | pbcopy ) >/dev/null 2>&1 &
+}
+
+# 等 Ctrl/Cmd/Alt/Shift/fn 都放開，最多等約 1.5 秒。
+# 刻意不看 capslock——它鎖著的時候會永遠是 true，每次都白等滿。
+# 每次 hs -c 本身就要幾十毫秒，所以不另外加 sleep；手指沒按著的話第一次就過。
+wait_modifiers_released() {
+    command -v hs >/dev/null 2>&1 || { sleep 0.3; return; }
+    for _ in $(seq 1 20); do
+        [ "$(hs -c 'local f = hs.eventtap.checkKeyboardModifiers()
+                    if f.ctrl or f.cmd or f.alt or f.shift or f.fn then return "held" end
+                    return "clear"' 2>/dev/null)" = "clear" ] && return
+        sleep 0.03
+    done
+}
+
+# 送 Cmd+V。優先走 Hammerspoon 的 eventtap：flags 是我們自己指定的，比較乾淨；
+# 沒有 hs（或 IPC 沒通）就退回 osascript。
+paste_now() {
+    if command -v hs >/dev/null 2>&1 &&
+       [ "$(hs -c 'hs.eventtap.keyStroke({"cmd"}, "v"); return "ok"' 2>/dev/null)" = "ok" ]; then
+        return
+    fi
+    osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"
+}
+
+# 把 /api/history 的 JSON 印成人看的格式
+json_list() {
+    python3 -c "
+import json, sys
+try:
+    items = json.load(sys.stdin).get('items', [])
+except Exception:
+    print('(讀不到歷史)'); sys.exit()
+if not items:
+    print('(還沒有記錄)')
+for it in items:
+    src = '🌐' if str(it.get('src','')).startswith('web') else '  '
+    print(f\"{it.get('ts','')[11:16]} {src} {it.get('text','')}\")
+" 2>/dev/null || echo "(讀不到歷史)"
+}
+
+# ---------- 主流程 ----------
+case "${1:-toggle}" in
+    toggle)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+            stop_and_transcribe
+        else
+            rm -f "$PIDFILE"; start_recording
+        fi ;;
+    start)  start_recording ;;
+    stop)   stop_and_transcribe ;;
+    cancel)
+        pid="$(cat "$PIDFILE" 2>/dev/null)"
+        [ -n "$pid" ] && { pkill -KILL -P "$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; }
+        rm -f "$PIDFILE" "$WAV"
+        notify "🚫 已取消" ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+            echo recording; else echo idle; fi ;;
+    ping)
+        if curl -s -m 5 -o /dev/null "${SERVER}/api/health"; then
+            echo "✅ 連得到 ${SERVER}"
+            curl -s -m 5 "${SERVER}/api/health"; echo
+        else
+            echo "❌ 連不上 ${SERVER}"
+            echo "   1) Tailscale 有沒有連線"
+            echo "   2) MagicDNS（Use Tailscale DNS）有沒有打勾 ← 最常見"
+        fi ;;
+    history) curl -s -m 10 "${SERVER}/api/history" | json_list ;;
+    log)     cat "$LOG" 2>/dev/null || echo "(還沒有 log)" ;;
+    *)
+        echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|ping|history|log]" >&2
+        exit 2 ;;
+esac
