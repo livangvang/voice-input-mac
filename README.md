@@ -18,68 +18,112 @@ Mac（這裡）                              Spark（家裡的 Linux 主機）
 剪貼簿 + Cmd+V 貼上  ◀──────── {text} ──
 ```
 
+三種介面，各有各的場合：**熱鍵**（主要用法）、**選單列圖示**（Hammerspoon 畫的）、
+**Dock App**（`app/`，見下方）。
+
+---
+
+## ⚠️ 上游是別人的，改東西前先看這裡
+
+Spark 上的 `~/.local/share/voice-input/mac/` 是上游，**由另一個人維護**。
+這台 Mac 是下游，改動**不推回去**。
+
+升級指令會直接覆寫下游檔案：
+
+```bash
+curl -fsSL https://spark-cb4e.taild73ae6.ts.net/mac/install.sh | bash
+```
+
+`install.sh` 用 `curl -o` 寫檔，而 **curl 會跟隨 symlink** —— 所以它不會破壞這裡的
+symlink 結構，但會把新版內容直接寫進本專案的實體檔。好處是 `git diff` 看得到差異、
+`git checkout` 就能還原；壞處是**寫在上游檔案裡的任何修改都會被無聲抹掉**。
+
+### 所以：要保留的修改，一律放在上游沒有的檔案裡
+
+| 上游的檔案（會被覆蓋，別改） | 我們的檔案（上游沒有，安全） |
+|---|---|
+| `bin/voice-input-mac.sh` | `hammerspoon/voice-input-chime.lua` |
+| `hammerspoon/voice-input.lua` | `app/`（整個 Dock App） |
+| `hammerspoon/voice-input-core.lua` | |
+| `hammerspoon/voice-input-menubar.lua` | |
+| `hammerspoon/assets/` | |
+
+擴充的接法是掛上游 `voice-input-core.lua` 提供的東西（`core.on()`、`core.phase()`、
+`core.run()`），不改它一行。上游哪天拿掉這些 API，我們的檔案會直接報錯 ——
+這比靜默失效好，壞掉要看得見。
+
+---
+
 ## 檔案怎麼放的
 
 實體檔案都在這個專案裡，原本的位置改成符號連結指過來——這樣專案集中管理，
-Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的慣例一致）。
+Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一致）。
 
-| 專案裡的檔案 | 連結到的位置 | 作用 |
-|---|---|---|
-| `bin/voice-input-mac.sh` | `~/bin/voice-input-mac.sh` | 錄音 / 上傳 / 貼上的主腳本 |
-| `hammerspoon/voice-input.lua` | `~/.hammerspoon/voice-input.lua` | 熱鍵偵測、提示音、音量圓 |
-| `hammerspoon/funk-note.aiff` | `~/.hammerspoon/funk-note.aiff` | 開始／結束的提示音 |
-| `hammerspoon/init.lua.reference` | （只是副本） | `~/.hammerspoon/init.lua` 現況備查 |
-| `archive/` | — | 2026-07-30 的舊版備份 |
+| 專案裡的檔案 | 連結到的位置 | 作用 | 來源 |
+|---|---|---|---|
+| `bin/voice-input-mac.sh` | `~/bin/voice-input-mac.sh` | 錄音／上傳／貼上，狀態寫進 `$TMPDIR` | 上游 |
+| `hammerspoon/voice-input.lua` | `~/.hammerspoon/voice-input.lua` | 雙擊 Ctrl 熱鍵 | 上游 |
+| `hammerspoon/voice-input-core.lua` | `~/.hammerspoon/voice-input-core.lua` | 狀態／設定／HTTP 共用層 | 上游 |
+| `hammerspoon/voice-input-menubar.lua` | `~/.hammerspoon/voice-input-menubar.lua` | 選單列圖示與面板 | 上游 |
+| `hammerspoon/assets/` | `~/.hammerspoon/voice-input/` | 面板 HTML、Anton 字體 | 上游 |
+| `hammerspoon/voice-input-chime.lua` | `~/.hammerspoon/voice-input-chime.lua` | **提示音** | 本地 |
+| `app/` | — | **Dock App**（見 [app/README.md](./app/README.md)） | 本地 |
+| `hammerspoon/init.lua.reference` | （只是副本） | `~/.hammerspoon/init.lua` 現況備查 | — |
 
 沒有搬進來的（屬於系統或執行期狀態）：
 
-- `~/.hammerspoon/init.lua` — Hammerspoon 的全域入口，只有三行，其中一行 `dofile` 載入本專案
-- `~/.hammerspoon/voice-meter-pos` — 音量圓被拖到哪的位置記錄
-- `~/.config/voice-input/config` — 選用的設定檔（目前不存在，腳本用內建預設值）
+- `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，四個 `require`／`dofile` 各載入一塊
+- `~/.hammerspoon/voice-meter-pos` — 舊版音量圓被拖到哪的位置記錄（新版沒有音量圓）
+- `~/.config/voice-input/config` — 選用的設定檔（目前不存在，用內建預設值）
+
+---
+
+## 提示音
+
+開始「咚–咚」兩聲、結束「咚」一聲。音檔 `funk-note.aiff` 是系統 Funk 剪掉
+2 秒殘響尾巴的版本。
+
+2026-08-06 上游改版時把提示音拿掉了，這裡用 `voice-input-chime.lua` 加回來 ——
+獨立檔案，不碰上游任何一行。
+
+它**輪詢**狀態而不是掛 `core.on("phase")`，因為實測事件延遲 222ms（`.sh` 寫檔只佔
+8ms，其餘都是 FSEvents 的通知延遲）。那個延遲會讓人覺得「按了沒反應」而提早開口，
+開頭半句就被吃掉。改成 20Hz 輪詢後是 **46ms**，聽起來就是按了就響。
+
+新版也一併拿掉了螢幕上那顆可拖曳的音量圓。**目前沒有加回來**，舊版程式碼還在：
+
+```bash
+git show pre-upgrade-20260814:hammerspoon/voice-input.lua
+```
+
+---
 
 ## 伺服器端
 
 | 項目 | 值 |
 |---|---|
 | 主機 | `spark-cb4e`（Tailscale，MagicDNS `spark-cb4e.taild73ae6.ts.net`／IP `100.117.58.113`） |
-| SSH | `ssh dogi@spark-cb4e` |
+| SSH | `ssh dogi@spark-cb4e`（tailnet policy 只允許 `dogi` 這個使用者） |
 | 專案路徑 | `/home/dogi/.local/share/voice-input`（捷徑：`~/Program/超簡單語音輸入`） |
-| 版控 | 伺服器端那份有自己的 git |
+| API | `/api/transcribe`（POST）、`/api/health`、`/api/history` |
 
-伺服器端專案裡有 `mac/` 目錄，是 Mac 客戶端的**上游**（`install.sh` 就是從那裡抓的）。
-
-## ⚠️ 版本落差
-
-這台 Mac 上跑的是 **2026-07-29/30 版**；Spark 的 `mac/` 目錄在 **2026-08-06** 已經改版，而且結構不同：
-
-| Spark `mac/` 的檔案 | 這裡有嗎 |
-|---|---|
-| `voice-input-mac.sh`（8/6） | 有，但是 7/30 的舊版 |
-| `voice-input-core.lua` | 沒有（這裡是單一檔 `voice-input.lua`，功能未拆分） |
-| `hammerspoon-voice-input.lua` | 同上 |
-| `voice-input-menubar.lua` | **沒有** — 選單列圖示是新版才有的 |
-| `voice-input-panel.html` | **沒有** — 控制面板也是新版才有的 |
-| `README-mac.md` | 沒有 |
-
-**還沒升級**，因為升級會改變現在的操作行為（多了選單列與面板）。要升級的話：
-
-```bash
-curl -fsSL https://spark-cb4e.taild73ae6.ts.net/mac/install.sh | bash
-```
-
-升級前先確認 symlink 會不會被 `install.sh` 覆蓋成實體檔——會的話就升級完再重新搬一次。
+---
 
 ## 常用指令
 
 ```bash
 voice-input-mac.sh ping       # 測 Spark 通不通（Tailscale + MagicDNS）
-voice-input-mac.sh status     # recording / idle
-voice-input-mac.sh history    # 看辨識歷史
+voice-input-mac.sh state      # 看狀態機（phase／pidfile／note／last）
+voice-input-mac.sh history    # 看辨識歷史（跟 Spark、手機共用同一份）
 voice-input-mac.sh cancel     # 錄音卡住時強制取消
-voice-input-mac.sh log        # 看最後一次的 sox / curl 錯誤
+voice-input-mac.sh log        # 看最後一次的 sox／curl 錯誤
 
-hs -c "hs.reload()"           # 改完 lua 之後重載 Hammerspoon
+hs -t 5 -c "hs.reload()"      # 改完 lua 之後重載 Hammerspoon
 ```
+
+`hs -c` 一定要加 `-t`：Hammerspoon 沒在跑的時候它會**永遠**等下去。
+
+---
 
 ## 需要的東西
 
@@ -87,12 +131,20 @@ hs -c "hs.reload()"           # 改完 lua 之後重載 Hammerspoon
 - `brew install --cask hammerspoon` + 系統設定 → 隱私權與安全性 → **輔助使用** 打勾
 - 麥克風權限
 - Tailscale 連線中，且 **Use Tailscale DNS（MagicDNS）有打勾**（憑證是簽給 MagicDNS 名字的，用 IP 會憑證不符）
+- Hammerspoon 開機自動啟動（`hs.autoLaunch(true)`，2026-08-14 已開啟）——
+  沒開的話重開機後熱鍵會悄悄失效，而且不會有任何提示
+
+---
 
 ## 要還原成搬移前的狀態
 
 ```bash
 P=~/Dev/personal/超簡單語音輸入法
-rm ~/bin/voice-input-mac.sh ~/.hammerspoon/voice-input.lua ~/.hammerspoon/funk-note.aiff
+rm ~/bin/voice-input-mac.sh ~/.hammerspoon/voice-input{.lua,-core.lua,-menubar.lua,-chime.lua} \
+   ~/.hammerspoon/voice-input ~/.hammerspoon/funk-note.aiff
 cp "$P/bin/voice-input-mac.sh" ~/bin/
-cp "$P/hammerspoon/voice-input.lua" "$P/hammerspoon/funk-note.aiff" ~/.hammerspoon/
+cp "$P"/hammerspoon/*.lua "$P/hammerspoon/funk-note.aiff" ~/.hammerspoon/
+cp -R "$P/hammerspoon/assets" ~/.hammerspoon/voice-input
 ```
+
+要回到升級前的 2026-07-30 版：`git checkout pre-upgrade-20260814`
