@@ -12,7 +12,7 @@ enum AppIcon {
     private static var lastKey = ""
 
     static func apply(_ s: AppStatus) {
-        let key = "\(s.phase.rawValue)|\(s.hotkeyWorking)|\(s.serverReachable ?? false)"
+        let key = "\(s.phase.rawValue)|\(s.hotkeyState)|\(s.serverReachable ?? false)"
         // 每 0.5 秒重畫一次圖示是白費工，狀態沒變就跳過。
         // 秒數走 badge，那個本來就要每次更新。
         if key != lastKey {
@@ -47,8 +47,12 @@ enum AppIcon {
         case .transcribing:
             barColor = NSColor(white: 0.65, alpha: 1)
         case .idle:
-            barColor = s.hotkeyWorking ? NSColor(white: 0.95, alpha: 1)
-                                       : NSColor(white: 0.42, alpha: 1)
+            // 查不到的時候用中間灰：不宣告正常，也不宣告故障。
+            switch s.hotkeyState {
+            case .working: barColor = NSColor(white: 0.95, alpha: 1)
+            case .unknown: barColor = NSColor(white: 0.68, alpha: 1)
+            case .broken:  barColor = NSColor(white: 0.42, alpha: 1)
+            }
         }
         barColor.setFill()
 
@@ -66,7 +70,8 @@ enum AppIcon {
         }
 
         // 斜線＝現在按熱鍵不會有任何反應。畫在最上層，蓋過音柱才看得出是「停用」。
-        if !s.hotkeyWorking {
+        // 只在**確定**壞掉時畫：查不到就畫斜線的話，等於用最醒目的方式散播一個猜測。
+        if s.hotkeyState == .broken {
             let slash = NSBezierPath()
             slash.move(to: NSPoint(x: 128, y: 128))
             slash.line(to: NSPoint(x: 384, y: 384))

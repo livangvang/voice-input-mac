@@ -50,21 +50,30 @@ struct ContentView: View {
     /// 整個 App 的重點：現在按下去到底有沒有用。
     /// 其他細節都是為了回答「不能用的話是哪裡壞了」。
     private var verdict: some View {
-        let ok = s.hotkeyWorking
         let serverOK = s.serverReachable ?? false
+
+        let (dot, title, sub): (Color, String, String) = {
+            switch s.hotkeyState {
+            case .broken:
+                return (Theme.bad, "現在按熱鍵不會有反應", "看下面哪一項是紅的")
+            case .unknown:
+                return (Theme.dimmer, "熱鍵狀態查不到",
+                        "Hammerspoon 沒回應查詢，不代表熱鍵壞了——直接按按看最準")
+            case .working:
+                return serverOK
+                    ? (Theme.good, "可以用", "連按兩下 Ctrl 開始講話，按任何一個鍵結束")
+                    : (Theme.warn, "熱鍵可用，但連不到 Spark", "錄得起來，但辨識不會有結果")
+            }
+        }()
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(ok && serverOK ? Theme.good : (ok || serverOK ? Theme.warn : Theme.bad))
-                    .frame(width: 10, height: 10)
-                Text(ok && serverOK ? "可以用" : (ok ? "熱鍵可用，但連不到 Spark" : "現在按熱鍵不會有反應"))
+                Circle().fill(dot).frame(width: 10, height: 10)
+                Text(title)
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(Theme.fg)
             }
-            Text(ok && serverOK
-                 ? "連按兩下 Ctrl 開始講話，按任何一個鍵結束"
-                 : "看下面哪一項是紅的")
+            Text(sub)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.dim)
         }

@@ -53,13 +53,34 @@ final class StatusStore: ObservableObject {
         AppIcon.apply(status)
     }
 
+    /// 上次查權限的時間。權限是使用者手動改的設定，幾乎不會變——
+    /// 每 3 秒 fork 一個 hs 進程去問它，代價遠大於它的資訊量。
+    private var lastAXCheck = Date.distantPast
+
     private func refreshProbe() async {
+        // Hammerspoon 在不在跑：純記憶體查詢，很便宜，維持 3 秒一次。
+        // 它掛掉是真正要立刻知道的事。
         let running = SystemProbe.hammerspoonRunning()
-        let ax = await SystemProbe.accessibilityGranted()
+        let wasRunning = status.hammerspoonRunning
         var s = status
         s.hammerspoonRunning = running
-        s.accessibilityGranted = ax
         status = s
+
+        // 權限：剛啟動、剛從沒跑變成在跑、或距上次超過 30 秒才查。
+        let justCameUp = running && !wasRunning
+        let stale = Date().timeIntervalSince(lastAXCheck) > 30
+        if running && (justCameUp || stale) {
+            lastAXCheck = Date()
+            let ax = await SystemProbe.accessibilityGranted()
+            var s2 = status
+            s2.accessibilityGranted = ax
+            status = s2
+        } else if !running {
+            var s2 = status
+            s2.accessibilityGranted = nil   // 沒在跑就無從查起，不要留著舊答案
+            status = s2
+        }
+
         AppIcon.apply(status)
     }
 

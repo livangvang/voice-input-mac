@@ -81,6 +81,17 @@ enum SystemProbe {
                 task.standardOutput = pipe
                 task.standardError = Pipe()
 
+                // stdin 一定要接 /dev/null。
+                //
+                // 沒接的話子行程會繼承這個 App 的 stdin，而 GUI App 的 stdin 永遠不會
+                // 送出 EOF——`hs` 就一直等在那裡，直到上面的逾時把它砍掉。
+                //
+                // 實測：stdin 繼承 = 卡 3.74 秒後被砍、輸出空字串；接 /dev/null = 0.09 秒
+                // 回傳正確結果。這個差別不只是慢：權限查詢每 3 秒跑一次，每次都留一個
+                // 卡住的 hs 進程掛在 Hammerspoon 的 message port 上，久了會把 IPC 弄壞，
+                // 連帶讓 .sh 裡那些沒有 -t 的 `hs -c` 一起卡住——症狀是「錄音關不掉」。
+                task.standardInput = FileHandle.nullDevice
+
                 do {
                     try task.run()
                 } catch {
