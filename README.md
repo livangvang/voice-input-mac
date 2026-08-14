@@ -42,9 +42,9 @@ symlink 結構，但會把新版內容直接寫進本專案的實體檔。好處
 
 | 上游的檔案（會被覆蓋，別改） | 我們的檔案（上游沒有，安全） |
 |---|---|
-| `bin/voice-input-mac.sh` | `hammerspoon/voice-input-chime.lua` |
-| `hammerspoon/voice-input.lua` | `app/`（整個 Dock App） |
-| `hammerspoon/voice-input-core.lua` | |
+| `bin/voice-input-mac.sh` | `hammerspoon/voice-input-chime.lua`（提示音） |
+| `hammerspoon/voice-input.lua` | `hammerspoon/voice-input-run-fix.lua`（修 core.run） |
+| `hammerspoon/voice-input-core.lua` | `app/`（整個 Dock App） |
 | `hammerspoon/voice-input-menubar.lua` | |
 | `hammerspoon/assets/` | |
 
@@ -95,6 +95,38 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 ```bash
 git show pre-upgrade-20260814:hammerspoon/voice-input.lua
 ```
+
+---
+
+## ⚠️ hs.task 會凍結事件迴圈（已規避，原因未明）
+
+**症狀**：雙擊 Ctrl 開得起來，按什麼鍵都停不掉。
+
+上游的 `core.run()` 用 `hs.task.new(...):start()` 執行 `.sh`。走這條路徑，錄音一開始
+Hammerspoon 的事件迴圈就整個凍住：eventtap 收不到任何按鍵、連每 0.1 秒的 `hs.timer`
+都不執行、`hs -c` 一律 timeout。錄音結束後自己恢復。
+
+A/B 實測：
+
+| 啟動方式 | 錄音期間的 IPC |
+|---|---|
+| `hs.task`（上游做法） | 連續 `error sending`，直到錄音結束 |
+| `os.execute` + `&` | 全程 `ok`，sox 照常錄音 |
+
+`voice-input-run-fix.lua` 覆蓋 `core.run` 改用後者。`require` 是 memoize 的，
+所以熱鍵和選單列按鈕會一起生效。
+
+**還沒查明的部分**：凍結時 `.sh` 的 fd 0/1/2 都已正確指向 `/dev/null`、進程也被 init
+收養，所以**不是**上游 `.sh` 註解裡提過的「管道收不到 EOF」那個老問題。最可疑的方向是
+`core.run` 沒有保存 hs.task 物件的參考，Lua GC 可能在子行程還活著時就回收了它 ——
+但沒有證實，別當結論。
+
+**排查時被數據否定的假設**（記著，別重蹈）：IPC 壅塞、event tap 被系統停用、
+提示音那條 20Hz 輪詢的 fork、menubar 每 0.1 秒的 canvas 渲染（實測只要 1.27ms/次）。
+真正破案的線索是：診斷檔裡按鍵一筆都沒記到，而**卡頓偵測器也一筆都沒寫** ——
+不是變慢，是連「我卡住了」都寫不出來。
+
+診斷這類問題時，**資料要寫檔案，不要存在 Lua 的記憶體裡**：IPC 一壞就讀不出來。
 
 ---
 
