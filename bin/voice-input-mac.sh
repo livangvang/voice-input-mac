@@ -27,6 +27,10 @@ MAX_SECONDS=180
 TRAILING_SPACE=0
 MIN_BYTES=16000          # 太短的錄音不用上傳
 
+# 貼上這一段的兩個時間常數。為什麼需要它們見 emit() 的註解。
+RESTORE_DELAY=5          # 還原舊剪貼簿前等多久（給目標 App 時間去讀剪貼簿）
+MODIFIER_WAIT=1.5        # 送 Cmd+V 前最多等使用者放開修飾鍵多久
+
 [ -f "$CONF" ] && . "$CONF"
 
 RUN="${TMPDIR:-/tmp}/voice-input"
@@ -46,6 +50,11 @@ PHASE="${RUN}/phase"        # 一個字：recording / transcribing / idle
 LAST="${RUN}/last.json"     # /api/transcribe 的原始回應
 NOTE="${RUN}/last.note"     # 純文字，給伺服器不知道的本地狀況
 
+# 貼上失敗是偶發的，一定得事後才查得到，但 $LOG 每次錄音和每次上傳都被
+# 覆寫（sox 和 curl 都用 `2>` 而不是 `2>>`），證據活不過下一次錄音。
+# 所以貼上這條路徑另記一份附加式的，並自己截斷免得無限長大。
+PASTELOG="${RUN}/paste.log"
+
 # 原子寫入：每 100ms 讀一次的檔案，直接覆寫遲早會被讀到寫到一半的狀態
 _atomic_write() {
     printf '%s' "$2" > "${1}.tmp" 2>/dev/null && mv -f "${1}.tmp" "$1" 2>/dev/null
@@ -53,6 +62,17 @@ _atomic_write() {
 }
 set_phase() { _atomic_write "$PHASE" "$1"; }
 note()      { _atomic_write "$NOTE" "$1"; }
+
+# 附加寫入，保留跨多次錄音的歷史；超過 400 行就砍回 200 行。
+paste_log() {
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$PASTELOG" 2>/dev/null
+    local lines; lines="$(wc -l < "$PASTELOG" 2>/dev/null | tr -d ' ')"
+    if [ -n "$lines" ] && [ "$lines" -gt 400 ] 2>/dev/null; then
+        tail -n 200 "$PASTELOG" > "${PASTELOG}.tmp" 2>/dev/null \
+            && mv -f "${PASTELOG}.tmp" "$PASTELOG" 2>/dev/null
+    fi
+    return 0
+}
 
 notify() {
     if command -v terminal-notifier >/dev/null 2>&1; then
@@ -156,8 +176,8 @@ stop_and_transcribe() {
     fi
 
     [ "$TRAILING_SPACE" = "1" ] && text="${text} "
-    emit "$text"
-    notify "✅ ${text:0:60}"
+    # emit 失敗時自己已經通知過了，這裡不能再蓋一個「✅」上去
+    emit "$text" && notify "✅ ${text:0:60}"
 }
 
 # 取 JSON 欄位。有 jq 就用 jq，沒有就退回 python3（macOS 內建）。
@@ -173,16 +193,76 @@ except Exception: pass
     fi
 }
 
+# ---------- 等使用者放開修飾鍵 ----------
+# macOS 會把「當下實體按著的修飾鍵」疊加到合成事件上。停止錄音最順手的方式
+# 就是再按一下 Ctrl（見 voice-input.lua 的 flagsChanged 分支），所以短句辨識
+# 得夠快時，Cmd+V 送出的那一刻 Ctrl 還壓著——實際到 App 的是 Ctrl+Cmd+V，
+# 多數 App 直接無反應，而腳本這邊看起來一切正常。
+#
+# 用 macOS 內建 python3 的 Quartz 讀 CGEventSourceFlagsState，不走 Hammerspoon：
+# 選單列按鈕和 Dock App 也會走到這條路徑，貼上不該綁死在 Hammerspoon 活著。
+# 讀不到就直接返回——「查不到」不等於「有按著」，不能因此拖慢每一次貼上。
+wait_for_modifiers_released() {
+    local r
+    r="$(/usr/bin/python3 - "$MODIFIER_WAIT" <<'PY' 2>/dev/null
+import sys, time
+try:
+    from Quartz import (CGEventSourceFlagsState,
+                        kCGEventSourceStateCombinedSessionState as STATE)
+except Exception:
+    sys.exit(0)                      # 沒有 Quartz 就別擋路
+
+# cmd / shift / ctrl / alt。fn 和 capslock 不會改變 Cmd+V 的意義，不必等。
+MASK = 0x00100000 | 0x00020000 | 0x00040000 | 0x00080000
+deadline = time.monotonic() + float(sys.argv[1])
+while time.monotonic() < deadline:
+    if not (CGEventSourceFlagsState(STATE) & MASK):
+        sys.exit(0)                  # 放開了，可以送了
+    time.sleep(0.02)
+print("timeout")                     # 一直按著，只能照樣送出去
+PY
+)"
+    [ "$r" = "timeout" ] \
+        && paste_log "等了 ${MODIFIER_WAIT}s 修飾鍵仍按著，照樣送 Cmd+V（可能貼不進去）"
+    return 0
+}
+
 # ---------- 貼進目前的 App ----------
+# 「伺服器辨識成功、但輸入框什麼都沒出現」在這裡有三個成因，2026-08-19 一起修掉：
+#
+# 1. 舊剪貼簿還原得太快。Cmd+V 只是把按鍵送進系統，目標 App 什麼時候真的去讀
+#    剪貼簿我們管不到。原本固定 `sleep 1` 就還原，App 一忙（分頁多、正在存檔）
+#    就會讀到已經被還原的舊內容——舊剪貼簿剛好是空的時候，貼出來就是什麼都沒有，
+#    而且完全沒有錯誤。改成等 $RESTORE_DELAY 秒，且只在剪貼簿內容還是我們寫的
+#    那一份時才還原（免得蓋掉使用者中途複製的東西）。
+#
+# 2. 修飾鍵還按著，Cmd+V 變成 Ctrl+Cmd+V。見 wait_for_modifiers_released。
+#
+# 3. osascript 靜默失敗。System Events 往返實測 111～328ms，偶爾逾時；原本沒檢查
+#    回傳值，失敗了照樣往下跳「✅ 辨識成功」的通知。現在會明確說貼上失敗，
+#    並提示文字還在剪貼簿裡——使用者自己按 Cmd+V 就救回來了，不用重講一次。
 emit() {
     local text="$1"
     local old; old="$(pbpaste 2>/dev/null)"
 
     printf '%s' "$text" | pbcopy
-    # 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式
-    osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"
 
-    ( sleep 1; printf '%s' "$old" | pbcopy ) >/dev/null 2>&1 &
+    wait_for_modifiers_released
+
+    # 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式
+    if ! osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"; then
+        paste_log "osascript keystroke 失敗（輔助使用權限？System Events 逾時？）"
+        note "❌ 貼上失敗，文字已在剪貼簿，請自己按 Cmd+V"
+        notify "❌ 貼上失敗，請自己按 Cmd+V"
+        return 1
+    fi
+
+    ( sleep "$RESTORE_DELAY"
+      # 內容還是我們寫的那份才還原：使用者可能在這幾秒內複製了別的東西
+      [ "$(pbpaste 2>/dev/null)" = "$text" ] && printf '%s' "$old" | pbcopy
+    ) >/dev/null 2>&1 &
+
+    return 0
 }
 
 # 把 /api/history 的 JSON 印成人看的格式
@@ -238,7 +318,13 @@ case "${1:-toggle}" in
             echo "   2) MagicDNS（Use Tailscale DNS）有沒有打勾 ← 最常見"
         fi ;;
     history) curl -s -m 10 "${SERVER}/api/history" | json_list ;;
-    log)     cat "$LOG" 2>/dev/null || echo "(還沒有 log)" ;;
+    log)
+        echo "── sox / curl（每次錄音會被覆寫）──"
+        cat "$LOG" 2>/dev/null || echo "(還沒有 log)"
+        echo
+        echo "── 貼上紀錄（累積保留，只記異常）──"
+        cat "$PASTELOG" 2>/dev/null || echo "(沒有貼上異常紀錄)"
+        ;;
     *)
         echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|state|ping|history|log]" >&2
         exit 2 ;;
