@@ -185,9 +185,15 @@ input[type=text] {
     </div>
     <input type="text" id="server" spellcheck="false">
     <div class="opt">
+      <div class="name">這台 Mac 的靈敏度門檻<div class="sub" id="tholdsub">留白＝跟著 Spark 的全域值</div></div>
+      <input type="text" id="localthold" spellcheck="false" placeholder="全域值"
+             style="width:72px;text-align:right">
+    </div>
+    <div class="opt">
       <div class="name" style="color:var(--steel);font-size:11px">
-        靈敏度門檻是三個介面共用的一個全域值，在 Spark 的小視窗調整。
-        在這裡改會連帶影響桌機口述和手機版。
+        MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，所以門檻可以每台各設一個。
+        這裡填的數字只影響這台 Mac，不會動到桌機口述和手機版。
+        參考上面的「上次量到」：門檻要低於你講話的音量、高於安靜時的音量。
       </div>
     </div>
     <div class="btnrow"><button id="openweb">開啟網頁版</button><button id="update">檢查更新</button></div>
@@ -246,11 +252,13 @@ window.VI = {
     // ── 音量條：門檻刻度 + 上次量到的 p95 ──
     // 刻意標成「上次量到」而不是即時。Mac 上 sox 獨佔麥克風、不回報音量，
     // 桌面版那條即時儀表是 voice-input-autostop 每 100ms 餵的，這裡沒有對應的東西。
-    const thold = s.threshold;
+    // 這台有自己的門檻就畫這台的。畫全域值會讓刻度跟實際判斷不一致，
+    // 使用者會看到「明明高於門檻卻被擋下」。
+    const thold = parseInt(s.config.SPEECH_ABS_THOLD, 10) || s.threshold;
     if (thold) {
       $('mark').style.left = (axisPos(thold) * 100) + '%';
       $('mklabel').style.left = (axisPos(thold) * 100) + '%';
-      $('mklabel').textContent = '門檻 ' + thold;
+      $('mklabel').textContent = (s.config.SPEECH_ABS_THOLD ? '我的門檻 ' : '門檻 ') + thold;
     }
     const g = s.last && s.last.gate;
     if (g && g.p95 != null) {
@@ -316,6 +324,11 @@ window.VI = {
     if (s.config) {
       if (document.activeElement !== $('server')) $('server').value = s.config.SERVER || '';
       $('trailing').checked = s.config.TRAILING_SPACE === '1';
+      if (document.activeElement !== $('localthold'))
+        $('localthold').value = s.config.SPEECH_ABS_THOLD || '';
+      $('tholdsub').textContent = s.config.SPEECH_ABS_THOLD
+        ? ('全域值是 ' + (s.threshold || '?') + '，這台用自己的')
+        : ('留白＝跟著 Spark 的全域值 ' + (s.threshold || '?'));
     }
   }
 };
@@ -327,4 +340,22 @@ $('openweb').onclick = () => send({action: 'openWeb'});
 $('update').onclick  = () => send({action: 'checkUpdate'});
 $('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
 $('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e.target.value.trim()});
+// 留白＝清掉這台的覆蓋值，回頭跟著全域值。範圍外或不是純數字的值不寫入也不夾到
+// 邊界——打錯字應該回到「還能用」的狀態，而不是靜靜套上一個你沒要求的數字。
+$('localthold').onchange = e => {
+  const raw = e.target.value.trim();
+  if (raw === '') return send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: ''});
+  if (!/^\d+$/.test(raw)) {
+    e.target.value = '';
+    $('tholdsub').textContent = '要填 ' + AXIS_MIN + ' 到 ' + AXIS_MAX + ' 之間的整數';
+    return;
+  }
+  const v = parseInt(raw, 10);
+  if (v < AXIS_MIN || v > AXIS_MAX) {
+    e.target.value = '';
+    $('tholdsub').textContent = '要填 ' + AXIS_MIN + ' 到 ' + AXIS_MAX + ' 之間的整數';
+    return;
+  }
+  send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: String(v)});
+};
 </script>

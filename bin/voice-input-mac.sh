@@ -27,6 +27,12 @@ MAX_SECONDS=180
 TRAILING_SPACE=0
 MIN_BYTES=16000          # 太短的錄音不用上傳
 
+# 這台 Mac 自己的靈敏度門檻。空的＝用 Spark 上的全域值。
+# 為什麼要有這個：MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，
+# 一個全域值不可能同時適合兩邊——調到 Mac 剛好，Spark 就會漏字。
+# 用 `voice-input-mac.sh thold` 查目前值與上次量到的音量，`thold 500` 設定。
+SPEECH_ABS_THOLD=""
+
 # 貼上這一段的兩個時間常數。為什麼需要它們見 emit() 的註解。
 RESTORE_DELAY=5          # 還原舊剪貼簿前等多久（給目標 App 時間去讀剪貼簿）
 MODIFIER_WAIT=1.5        # 送 Cmd+V 前最多等使用者放開修飾鍵多久
@@ -153,10 +159,15 @@ stop_and_transcribe() {
     # X-Voice-Input-Client 讓伺服器把來源記成 mac:… 而不是 web:…。
     # 沒有這個標頭的話，Mac 的辨識在歷史裡跟手機 PWA 長得一模一樣，
     # 選單列面板的歷史會顯示「什麼都來自網頁版」。舊客戶端不送，向後相容。
+    # 有設定自己的門檻就送出去；沒設就完全不送這個標頭，伺服器照舊用全域值。
+    local thold_hdr=()
+    [ -n "$SPEECH_ABS_THOLD" ] && thold_hdr=(-H "X-Voice-Input-Thold: ${SPEECH_ABS_THOLD}")
+
     local resp
     resp="$(curl -s -m 60 -X POST --data-binary @"$WAV" \
                 -H "Content-Type: audio/wav" \
-                -H "X-Voice-Input-Client: mac" "${SERVER}/api/transcribe" 2>"$LOG")"
+                -H "X-Voice-Input-Client: mac" \
+                "${thold_hdr[@]}" "${SERVER}/api/transcribe" 2>"$LOG")"
     if [ -z "$resp" ]; then
         die "連不上 ${SERVER}（Tailscale 有連線嗎？MagicDNS 開了嗎？）"
     fi
@@ -265,6 +276,16 @@ emit() {
     return 0
 }
 
+# 取數字欄位。跟 json_get 分開是因為 jq 的 `// empty` 會把數字 0 當成空值，
+# 而門檻理論上不會是 0——但一個只在極端值出錯的解析器不值得留著。
+json_get_num() {
+    python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('$1',''))
+except Exception: print('(讀不到)')
+" 2>/dev/null || echo "(讀不到)"
+}
+
 # 把 /api/history 的 JSON 印成人看的格式
 json_list() {
     python3 -c "
@@ -317,6 +338,42 @@ case "${1:-toggle}" in
             echo "   1) Tailscale 有沒有連線"
             echo "   2) MagicDNS（Use Tailscale DNS）有沒有打勾 ← 最常見"
         fi ;;
+    thold)
+        # 沒帶參數＝查詢，帶了就寫進設定檔。
+        if [ -z "${2:-}" ]; then
+            if [ -n "$SPEECH_ABS_THOLD" ]; then
+                echo "這台 Mac 的門檻：${SPEECH_ABS_THOLD}"
+            else
+                echo "這台 Mac 沒有自己的門檻，用 Spark 的全域值"
+            fi
+            echo "Spark 的全域值：$(curl -s -m 5 "${SERVER}/api/health" | json_get_num threshold)"
+            # 上次量到的音量就是最好的參考：門檻要低於你講話的 p95、高於環境的 floor。
+            local_gate="$(json_get "$(cat "$LAST" 2>/dev/null)" gate)"
+            [ -n "$local_gate" ] && echo "上次量到：${local_gate}"
+            echo
+            echo "設定：voice-input-mac.sh thold 500      （範圍 80–16000）"
+            echo "取消：voice-input-mac.sh thold default  （改回用全域值）"
+            exit 0
+        fi
+        mkdir -p "$(dirname "$CONF")"
+        # 濾掉舊的那一行、把新的附在最後，其他設定原封不動
+        # （跟 voice-input calibrate、小視窗滑桿、Mac 選單列同一套作法）
+        tmp="${CONF}.tmp"
+        grep -v '^SPEECH_ABS_THOLD=' "$CONF" 2>/dev/null > "$tmp"
+        if [ "$2" = "default" ] || [ "$2" = "off" ]; then
+            mv -f "$tmp" "$CONF"
+            echo "✅ 已改回用 Spark 的全域門檻"
+        else
+            case "$2" in
+                ''|*[!0-9]*) rm -f "$tmp"; die "門檻要是數字，例如 500" ;;
+            esac
+            if [ "$2" -lt 80 ] || [ "$2" -gt 16000 ]; then
+                rm -f "$tmp"; die "門檻要在 80 到 16000 之間（收到 $2）"
+            fi
+            printf 'SPEECH_ABS_THOLD="%s"   # 這台 Mac 自己的門檻\n' "$2" >> "$tmp"
+            mv -f "$tmp" "$CONF"
+            echo "✅ 這台 Mac 的門檻設成 $2（下次口述就生效，不用重開）"
+        fi ;;
     history) curl -s -m 10 "${SERVER}/api/history" | json_list ;;
     log)
         echo "── sox / curl（每次錄音會被覆寫）──"
@@ -326,6 +383,6 @@ case "${1:-toggle}" in
         cat "$PASTELOG" 2>/dev/null || echo "(沒有貼上異常紀錄)"
         ;;
     *)
-        echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|state|ping|history|log]" >&2
+        echo "用法: voice-input-mac.sh [toggle|start|stop|cancel|status|state|ping|history|log|thold]" >&2
         exit 2 ;;
 esac

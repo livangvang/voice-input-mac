@@ -38,6 +38,13 @@ curl -fsSL https://spark-cb4e.taild73ae6.ts.net/mac/install.sh | bash
 symlink 結構，但會把新版內容直接寫進本專案的實體檔。好處是 `git diff` 看得到差異、
 `git checkout` 就能還原；壞處是**寫在上游檔案裡的任何修改都會被無聲抹掉**。
 
+### ⚠️ 例外：`.sh` 和 `panel.html` 已經雙向分岔（2026-08-25）
+
+`bin/voice-input-mac.sh` 和 `hammerspoon/assets/voice-input-panel.html` 同時含有：
+本地的貼上修復（上游沒有）＋ 從上游移植回來的 per-device 門檻（`thold`）。
+**現在跑 `install.sh` 或面板的「檢查更新」會把貼上修復洗掉**，升級這兩個檔案
+只能手動合併（或先把貼上修復回送上游）。其他檔案照舊。
+
 ### 所以：要保留的修改，一律放在上游沒有的檔案裡
 
 | 上游的檔案（會被覆蓋，別改） | 我們的檔案（上游沒有，安全） |
@@ -74,7 +81,7 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 
 - `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，四個 `require`／`dofile` 各載入一塊
 - `~/.hammerspoon/voice-meter-pos` — 舊版音量圓被拖到哪的位置記錄（新版沒有音量圓）
-- `~/.config/voice-input/config` — 選用的設定檔（目前不存在，用內建預設值）
+- `~/.config/voice-input/config` — 本機設定檔（2026-08-14 起存在；目前有 `MAX_SECONDS`，門檻 `thold` 子指令與面板也寫這裡）
 
 ---
 
@@ -193,6 +200,7 @@ voice-input-mac.sh state      # 看狀態機（phase／pidfile／note／last）
 voice-input-mac.sh history    # 看辨識歷史（跟 Spark、手機共用同一份）
 voice-input-mac.sh cancel     # 錄音卡住時強制取消
 voice-input-mac.sh log        # 看最後一次的 sox／curl 錯誤
+voice-input-mac.sh thold      # 查這台的靈敏度門檻（thold 500 設定／thold default 取消）
 
 hs -t 5 -c "hs.reload()"      # 改完 lua 之後重載 Hammerspoon
 ```
