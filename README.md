@@ -23,31 +23,35 @@ Mac（這裡）                              Spark（家裡的 Linux 主機）
 
 ---
 
-## ⚠️ 上游是別人的，改東西前先看這裡
+## 上游現在是我們自己維護（2026-08-25 起）
 
-Spark 上的 `~/.local/share/voice-input/mac/` 是上游，**由另一個人維護**。
-這台 Mac 是下游，改動**不推回去**。
+Spark 上的 `~/.local/share/voice-input/mac/` 是上游。它原本由另一個人維護，
+但那邊從 2026-08-09 之後就沒有人在動了 —— 16 天份的改動堆在工作區沒進 git，
+Windows 客戶端整包也沒納管。既然實質上沒人管理，**這台 Mac 的修改改成推回去**。
 
-升級指令會直接覆寫下游檔案：
+2026-08-25 已把下列東西推回上游並 commit，上下游現在**完全一致**：
+
+- 三個貼上修復（`wait_for_modifiers_released`、`RESTORE_DELAY` 條件式還原、
+  osascript 失敗偵測、`paste.log`）
+- bash 3.2 的空陣列展開修復（見下方「踩過的坑」）
+- 面板門檻輸入的嚴格驗證
+- server 端 `apply_corrections()`（API 路徑原本完全沒套校正表）
+
+**所以 `install.sh` 不再是威脅** —— 它抓下來的就是我們自己的版本。
 
 ```bash
 curl -fsSL https://spark-cb4e.taild73ae6.ts.net/mac/install.sh | bash
 ```
 
-`install.sh` 用 `curl -o` 寫檔，而 **curl 會跟隨 symlink** —— 所以它不會破壞這裡的
-symlink 結構，但會把新版內容直接寫進本專案的實體檔。好處是 `git diff` 看得到差異、
-`git checkout` 就能還原；壞處是**寫在上游檔案裡的任何修改都會被無聲抹掉**。
+`install.sh` 用 `curl -o` 寫檔，而 **curl 會跟隨 symlink**，所以它不破壞這裡的
+symlink 結構，會把內容直接寫進本專案的實體檔（`git diff` 看得到、`git checkout` 可還原）。
 
-### ⚠️ 例外：`.sh` 和 `panel.html` 已經雙向分岔（2026-08-25）
+### 但規矩不變：改完要推回去，不然下次升級還是會被洗掉
 
-`bin/voice-input-mac.sh` 和 `hammerspoon/assets/voice-input-panel.html` 同時含有：
-本地的貼上修復（上游沒有）＋ 從上游移植回來的 per-device 門檻（`thold`）。
-**現在跑 `install.sh` 或面板的「檢查更新」會把貼上修復洗掉**，升級這兩個檔案
-只能手動合併（或先把貼上修復回送上游）。其他檔案照舊。
+`install.sh` 覆蓋的仍然是這幾個檔案。在它們裡面改東西**沒有問題**，
+但改完必須同步推回 Spark 的 `mac/`，否則就會重新產生分岔。
 
-### 所以：要保留的修改，一律放在上游沒有的檔案裡
-
-| 上游的檔案（會被覆蓋，別改） | 我們的檔案（上游沒有，安全） |
+| `install.sh` 會覆蓋（改完要推回上游） | 上游沒有的檔案（本地獨有，安全） |
 |---|---|
 | `bin/voice-input-mac.sh` | `hammerspoon/voice-input-chime.lua`（提示音） |
 | `hammerspoon/voice-input.lua` | `hammerspoon/voice-input-run-fix.lua`（修 core.run） |
@@ -55,9 +59,18 @@ symlink 結構，但會把新版內容直接寫進本專案的實體檔。好處
 | `hammerspoon/voice-input-menubar.lua` | |
 | `hammerspoon/assets/` | |
 
-擴充的接法是掛上游 `voice-input-core.lua` 提供的東西（`core.on()`、`core.phase()`、
-`core.run()`），不改它一行。上游哪天拿掉這些 API，我們的檔案會直接報錯 ——
-這比靜默失效好，壞掉要看得見。
+推回去的做法（兩個檔案都要，然後在 Spark 上 commit）：
+
+```bash
+P=~/Dev/personal/超簡單語音輸入法
+scp "$P/bin/voice-input-mac.sh" dogi@spark-cb4e:.local/share/voice-input/mac/
+scp "$P/hammerspoon/assets/voice-input-panel.html" dogi@spark-cb4e:.local/share/voice-input/mac/
+ssh dogi@spark-cb4e 'cd ~/.local/share/voice-input && git add -A && git commit'
+```
+
+右欄那些檔案上游沒有，永遠安全。它們的擴充方式是掛 `voice-input-core.lua` 提供的
+API（`core.on()`、`core.phase()`、`core.run()`），不改它一行 —— 上游哪天拿掉這些
+API，我們的檔案會直接報錯，這比靜默失效好，壞掉要看得見。
 
 ---
 
@@ -147,6 +160,18 @@ A/B 實測：
 **Swift 的 `Process` 一定要設 `standardInput = FileHandle.nullDevice`。**
 沒設的話子行程會繼承 GUI App 的 stdin，而那個 stdin 永遠不送 EOF——`hs` 就一直等
 到逾時。實測差 40 倍：3.74 秒卡死 vs 0.09 秒正常。細節在 `app/Sources/VoiceInputApp/SystemProbe.swift`。
+
+**macOS 的 bash 永遠是 3.2，空陣列展開會炸。** `"${arr[@]}"` 在 `set -u` 下，
+陣列為空時直接 unbound variable。bash 4.4+ 修掉了，但 macOS 內建的是 2007 年的
+3.2（授權問題，Apple 不會更新），homebrew 也沒裝新版。移植 per-device 門檻時
+踩到：空陣列正好是「沒設本機門檻」的預設狀態，所以**每次辨識都死在 curl 那行**，
+而錯誤訊息卻是誤導人的「連不上伺服器」—— 連線明明是好的。
+寫法要用 `${arr[@]+"${arr[@]}"}`。
+
+**測試要走使用者真正走的那條路徑（第二次踩）。** 上面那個 bug 當天測了 `thold`
+子指令、測了直接 curl、測了語法檢查，全過 —— 唯獨沒走「錄音→停止」這條
+使用者真正走的路。這條 README 下面早就寫過一次了，還是又踩。
+現在的驗證方式：`sox -n` 造一個靜音 wav + 假的 pidfile，直接跑 `.sh stop` 走完整流程。
 
 **`hs -c` 一定要加 `-t`。** Hammerspoon 沒在跑的時候它會**永遠**等下去（等一個
 不會有人回應的 message port）。這在腳本裡會變成整個流程卡住。
