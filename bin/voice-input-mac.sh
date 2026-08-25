@@ -209,36 +209,62 @@ except Exception: pass
     fi
 }
 
-# ---------- 等使用者放開修飾鍵 ----------
+# ---------- 貼上前的探測：等修飾鍵放開 + 查目標 App ----------
 # macOS 會把「當下實體按著的修飾鍵」疊加到合成事件上。停止錄音最順手的方式
 # 就是再按一下 Ctrl（見 voice-input.lua 的 flagsChanged 分支），所以短句辨識
 # 得夠快時，Cmd+V 送出的那一刻 Ctrl 還壓著——實際到 App 的是 Ctrl+Cmd+V，
 # 多數 App 直接無反應，而腳本這邊看起來一切正常。
 #
-# 用 macOS 內建 python3 的 Quartz 讀 CGEventSourceFlagsState，不走 Hammerspoon：
-# 選單列按鈕和 Dock App 也會走到這條路徑，貼上不該綁死在 Hammerspoon 活著。
+# 順便查「等一下會貼到誰身上」。這兩件事合併成一次 python 呼叫：查前景 App
+# 只要 72ms，但多 fork 一個 python 直譯器就要 60ms，沒道理分兩次。
+#
+# 為什麼一定要查目標：貼上是盲貼，送出 Cmd+V 之後成功與否我們一無所知。
+# 「辨識成功但輸入框什麼都沒出現」如果不是前三個成因，就完全沒有線索可查——
+# 這正是 README 記過的教訓：診斷資料要寫檔案，事後才有東西可看。
+#
+# 用 macOS 內建 python3 的 Quartz／AppKit，不走 Hammerspoon：選單列按鈕和
+# Dock App 也會走到這條路徑，貼上不該綁死在 Hammerspoon 活著。
 # 讀不到就直接返回——「查不到」不等於「有按著」，不能因此拖慢每一次貼上。
-wait_for_modifiers_released() {
-    local r
-    r="$(/usr/bin/python3 - "$MODIFIER_WAIT" <<'PY' 2>/dev/null
+PASTE_TARGET=""        # 目標 App 名稱
+PASTE_TARGET_ID=""     # 目標 bundle id
+probe_before_paste() {
+    PASTE_TARGET=""; PASTE_TARGET_ID=""
+    local out
+    out="$(/usr/bin/python3 - "$MODIFIER_WAIT" <<'PY' 2>/dev/null
 import sys, time
 try:
     from Quartz import (CGEventSourceFlagsState,
                         kCGEventSourceStateCombinedSessionState as STATE)
 except Exception:
-    sys.exit(0)                      # 沒有 Quartz 就別擋路
+    print("unknown")                 # 沒有 Quartz 就別擋路
+    sys.exit(0)
 
 # cmd / shift / ctrl / alt。fn 和 capslock 不會改變 Cmd+V 的意義，不必等。
 MASK = 0x00100000 | 0x00020000 | 0x00040000 | 0x00080000
 deadline = time.monotonic() + float(sys.argv[1])
+status = "timeout"                   # 一直按著，只能照樣送出去
 while time.monotonic() < deadline:
     if not (CGEventSourceFlagsState(STATE) & MASK):
-        sys.exit(0)                  # 放開了，可以送了
+        status = "ok"                # 放開了，可以送了
+        break
     time.sleep(0.02)
-print("timeout")                     # 一直按著，只能照樣送出去
+print(status)
+
+# 目標 App 要在「等完」之後才查：等待期間使用者可能切了視窗。
+try:
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    print(app.localizedName() or "?")
+    print(app.bundleIdentifier() or "?")
+except Exception:
+    pass
 PY
 )"
-    [ "$r" = "timeout" ] \
+    local status
+    status="$(printf '%s\n' "$out" | sed -n 1p)"
+    PASTE_TARGET="$(printf '%s\n' "$out" | sed -n 2p)"
+    PASTE_TARGET_ID="$(printf '%s\n' "$out" | sed -n 3p)"
+    [ "$status" = "timeout" ] \
         && paste_log "等了 ${MODIFIER_WAIT}s 修飾鍵仍按著，照樣送 Cmd+V（可能貼不進去）"
     return 0
 }
@@ -263,7 +289,18 @@ emit() {
 
     printf '%s' "$text" | pbcopy
 
-    wait_for_modifiers_released
+    probe_before_paste
+
+    # 4. 焦點在我們自己的視窗上。狀態板和選單列面板都沒有輸入框，貼過去
+    #    100% 是石沉大海——而且前三個成因都修好之後，這個才浮出水面。
+    #    不硬送 Cmd+V：送了也沒用，還會讓使用者以為是別的問題。
+    case "$PASTE_TARGET_ID" in
+        tw.shadowperformance.voiceinput|org.hammerspoon.Hammerspoon)
+            paste_log "⚠️ 焦點在「${PASTE_TARGET}」（我們自己的視窗，沒有輸入框），不送 Cmd+V"
+            note "⚠️ 焦點在「${PASTE_TARGET}」，文字已在剪貼簿：切回輸入框按 Cmd+V"
+            notify "⚠️ 焦點不在輸入框，請切回去按 Cmd+V"
+            return 1 ;;
+    esac
 
     # 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式
     if ! osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"; then
@@ -272,6 +309,10 @@ emit() {
         notify "❌ 貼上失敗，請自己按 Cmd+V"
         return 1
     fi
+
+    # 成功也記一行。原本只記異常，結果「有時候貼不進去」完全沒有線索可查——
+    # osascript 回傳成功不代表文字真的進了輸入框，只有目標 App 是誰查得出來。
+    paste_log "→ ${PASTE_TARGET:-?}｜${text:0:24}"
 
     ( sleep "$RESTORE_DELAY"
       # 內容還是我們寫的那份才還原：使用者可能在這幾秒內複製了別的東西
