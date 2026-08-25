@@ -160,6 +160,11 @@ stop_and_transcribe() {
     # 沒有這個標頭的話，Mac 的辨識在歷史裡跟手機 PWA 長得一模一樣，
     # 選單列面板的歷史會顯示「什麼都來自網頁版」。舊客戶端不送，向後相容。
     # 有設定自己的門檻就送出去；沒設就完全不送這個標頭，伺服器照舊用全域值。
+    #
+    # ⚠️ 展開時必須用 ${arr[@]+"${arr[@]}"} 這個寫法，不能直接 "${arr[@]}"：
+    # macOS 內建的 bash 是 3.2，空陣列 + set -u 直接展開會炸 unbound variable，
+    # 整個辨識死在 curl 這行，錯誤訊息卻是誤導人的「連不上」。
+    # （上游原版就有這個雷；bash 4.4+ 修掉了，但 macOS 永遠是 3.2。）
     local thold_hdr=()
     [ -n "$SPEECH_ABS_THOLD" ] && thold_hdr=(-H "X-Voice-Input-Thold: ${SPEECH_ABS_THOLD}")
 
@@ -167,7 +172,7 @@ stop_and_transcribe() {
     resp="$(curl -s -m 60 -X POST --data-binary @"$WAV" \
                 -H "Content-Type: audio/wav" \
                 -H "X-Voice-Input-Client: mac" \
-                "${thold_hdr[@]}" "${SERVER}/api/transcribe" 2>"$LOG")"
+                ${thold_hdr[@]+"${thold_hdr[@]}"} "${SERVER}/api/transcribe" 2>"$LOG")"
     if [ -z "$resp" ]; then
         die "連不上 ${SERVER}（Tailscale 有連線嗎？MagicDNS 開了嗎？）"
     fi
