@@ -269,6 +269,43 @@ PY
     return 0
 }
 
+# ---------- 送出 Cmd+V ----------
+# 第五個成因（2026-08-27）：**中文輸入法把那個 "v" 吃掉了**。
+#
+# osascript 的 `keystroke "v"` 走的是字元合成路徑（把字元丟進文字輸入系統），
+# 注音／倉頡等輸入法開著時，字元會先進輸入法的組字緩衝區，Cmd+V 這個快捷鍵
+# 就沒送到 App。切回英文輸入法又完全正常——症狀正是「有時候貼得進去、有時候
+# 貼不進去」，而且 osascript 回傳成功，paste.log 只看得到一行漂亮的成功紀錄。
+#
+# 改用 Quartz 直接送 keycode 9（V 的**實體鍵位**）的 CGEvent：走的是硬體按鍵
+# 路徑，跟使用者自己按 Cmd+V 一模一樣，不經過輸入法的字元層。
+# 沒有 Quartz 或送不出去才退回舊的 osascript，不會比原本更差。
+send_cmd_v() {
+    if /usr/bin/python3 - >/dev/null 2>&1 <<'PY'
+import sys, time
+try:
+    from Quartz import (CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags,
+                        kCGHIDEventTap, kCGEventFlagMaskCommand)
+except Exception:
+    sys.exit(1)
+V_KEYCODE = 9
+down = CGEventCreateKeyboardEvent(None, V_KEYCODE, True)
+up   = CGEventCreateKeyboardEvent(None, V_KEYCODE, False)
+if down is None or up is None:
+    sys.exit(1)
+CGEventSetFlags(down, kCGEventFlagMaskCommand)
+CGEventSetFlags(up,   kCGEventFlagMaskCommand)
+CGEventPost(kCGHIDEventTap, down)
+time.sleep(0.01)          # 沒有間隔的話，部分 App 會把 down/up 當成同一個事件丟掉
+CGEventPost(kCGHIDEventTap, up)
+PY
+    then
+        return 0
+    fi
+    paste_log "Quartz 送鍵失敗，退回 osascript keystroke（輸入法可能會吃掉）"
+    osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"
+}
+
 # ---------- 貼進目前的 App ----------
 # 「伺服器辨識成功、但輸入框什麼都沒出現」在這裡有三個成因，2026-08-19 一起修掉：
 #
@@ -303,8 +340,8 @@ emit() {
     esac
 
     # 需要「系統設定 → 隱私權與安全性 → 輔助使用」授權給執行這支腳本的程式
-    if ! osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>>"$LOG"; then
-        paste_log "osascript keystroke 失敗（輔助使用權限？System Events 逾時？）"
+    if ! send_cmd_v; then
+        paste_log "送 Cmd+V 失敗（輔助使用權限？System Events 逾時？）"
         note "❌ 貼上失敗，文字已在剪貼簿，請自己按 Cmd+V"
         notify "❌ 貼上失敗，請自己按 Cmd+V"
         return 1
