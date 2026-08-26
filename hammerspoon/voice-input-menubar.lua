@@ -81,10 +81,71 @@ local function webviewAvailable()
     return hs.webview ~= nil and hs.webview.usercontent ~= nil
 end
 
+-- ── 詞彙表 ────────────────────────────────────────────
+-- 詞彙表在 Spark 上，而且提示詞是 whisper-server **啟動時**就寫死在指令列上的，
+-- 所以加詞必須經過伺服器（它會寫檔案再重啟）。這裡只負責問和顯示。
+--
+-- 用 hs.http 而不是 hs.task 跑 curl：README 那條「hs.task 會凍結事件迴圈」的坑
+-- 至今原因未明，純 Lua 的 hs.http 不 fork，不必去碰那顆地雷。
+local vocab = {summary = "讀取中…", msg = ""}
+
+local function vocabRefresh()
+    hs.http.asyncGet(core.server() .. "/api/vocab", nil, function(code, body)
+        local ok, data = pcall(hs.json.decode, body or "")
+        if code == 200 and ok and type(data) == "table" and data.words then
+            vocab.summary = string.format("共 %d 個詞，其中 %d 個真的進得了提示詞",
+                                          #data.words, #(data.used or {}))
+        else
+            vocab.summary = "讀不到詞彙表（HTTP " .. tostring(code) .. "）"
+        end
+        M.render()
+    end)
+end
+
+-- 加完詞的回報要講三件事：加成功沒有、**這個詞會不會真的生效**、擠掉了誰。
+-- 提示詞有 224 token 的硬上限而且早就滿了，加進去卻不生效是常態不是例外——
+-- 不明講的話，使用者會以為加了就有效，然後怪辨識不準。
+local function vocabAdd(word)
+    vocab.msg = "加入中…（辨識服務要重啟幾秒）"
+    M.render()
+    hs.http.asyncPost(core.server() .. "/api/vocab",
+                      hs.json.encode({word = word}),
+                      {["Content-Type"] = "application/json"},
+        function(code, body)
+            local ok, data = pcall(hs.json.decode, body or "")
+            if code == 200 and ok and type(data) == "table" then
+                local lines = {}
+                if not data.added then
+                    lines[#lines + 1] = "「" .. word .. "」本來就在裡面了"
+                elseif data.effective then
+                    lines[#lines + 1] = "✅ 已加入「" .. word .. "」，下一句就生效"
+                else
+                    lines[#lines + 1] = "⚠️ 已加入「" .. word .. "」，但提示詞塞不下，這個詞不會生效"
+                end
+                if type(data.pushed_out) == "table" and #data.pushed_out > 0 then
+                    lines[#lines + 1] = "被它擠掉的詞：" .. table.concat(data.pushed_out, "、")
+                end
+                if data.restarted == false then
+                    lines[#lines + 1] = "（辨識服務還沒重啟完成，再等一下）"
+                end
+                vocab.msg = table.concat(lines, "\n")
+                vocabRefresh()
+            else
+                local err = (ok and type(data) == "table" and data.error)
+                            or ("HTTP " .. tostring(code))
+                vocab.msg = "❌ 加入失敗：" .. err
+                M.render()
+            end
+        end)
+end
+
 local function handleMessage(body)
     if type(body) ~= "table" then return end
     local a = body.action
-    if a == "copy" then
+    if a == "addVocab" then
+        local w = tostring(body.word or ""):match("^%s*(.-)%s*$")
+        if w ~= "" then vocabAdd(w) end
+    elseif a == "copy" then
         if body.text and body.text ~= "" then
             hs.pasteboard.setContents(body.text)
             hs.alert.show("已複製")
@@ -156,6 +217,7 @@ function M.show()
     p:show()
     core.refreshHealth()
     core.refreshHistory()
+    vocabRefresh()
     M.render()
 end
 
@@ -196,6 +258,7 @@ function M.render()
             healthError = state.healthError, who = state.who,
             last = state.last, history = state.history,
             config = core.config(),
+            vocab = vocab,
         }
         local ok, js = pcall(hs.json.encode, payload)
         if ok then panel:evaluateJavaScript("window.VI && VI.push(" .. js .. ")") end

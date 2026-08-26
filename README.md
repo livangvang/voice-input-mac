@@ -98,6 +98,42 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 
 ---
 
+## 詞彙表：從選單列面板加詞（2026-08-27）
+
+面板上多了一塊 **VOCAB**：輸入一個詞、按「加入詞彙」，它就會進到 Spark 的
+`config/vocabulary.txt`，whisper 下一句就認得。
+
+它走的是新的 `POST /api/vocab`（Spark 端 `bin/voice-input-web`），不是 ssh 改檔案——
+面板只負責問和顯示，寫檔和重啟都在伺服器那邊做完。
+
+三個設計上必須知道的事：
+
+**新詞一定插到檔案最前面。** 提示詞有 224 token 的硬上限，放不下的從**尾巴**被
+無聲砍掉。使用者現在要加的詞就是他現在最需要的，插尾巴等於加一個永遠不生效的詞——
+那比不能加更糟，因為他不會知道。
+
+**加一個詞通常會擠掉一個。** 詞彙表早就滿了（實測 75 個詞只有 37 個進得了提示詞，
+220/222 token）。所以 API 回傳裡有 `effective`（這個詞真的生效了嗎）和 `pushed_out`
+（被它擠出去的是誰），面板直接把這兩件事寫出來。不講的話使用者會以為兩個詞都在。
+
+**加完會自動重啟 whisper-server。** 提示詞是 `start-server.sh` 啟動時就寫死在
+`--prompt` 上的，跑起來之後改檔案它看不到。實測重啟到就緒約 1.5 秒（模型在頁面
+快取裡）。`restart_whisper()` 會先 `sleep 1` 再探測：不等的話會探到**還沒死的舊
+進程**就宣布就緒，而它用的是舊提示詞。
+
+相關的查詢指令（在 Spark 上）：
+
+```bash
+~/.local/share/voice-input/build-prompt.py --report   # 人看的：誰生效、誰被裁掉
+~/.local/share/voice-input/build-prompt.py --json     # API 用的同一份資料
+curl -s https://spark-cb4e.taild73ae6.ts.net/api/vocab | python3 -m json.tool
+```
+
+刪詞還沒有 UI，直接編 `~/.config/voice-input/vocabulary.txt` 再
+`systemctl --user restart voice-input-server`。
+
+---
+
 ## 提示音
 
 開始「咚–咚」兩聲、結束「咚」一聲。音檔 `funk-note.aiff` 是系統 Funk 剪掉
@@ -153,6 +189,33 @@ A/B 實測：
 
 ---
 
+## ⚠️ 中文輸入法會吃掉 osascript 送的 Cmd+V（2026-08-27 修）
+
+**症狀**：辨識成功、`paste.log` 一行漂亮的成功紀錄、文字也確實在剪貼簿裡，
+但輸入框什麼都沒出現——自己按 Cmd+V 就貼得出來。而且**有時候又是好的**。
+
+**原因**：`osascript ... keystroke "v" using command down` 走的是**字元合成**路徑
+（把字元丟進文字輸入系統）。注音輸入法開著時，那個 "v" 先進了輸入法的組字緩衝區，
+Cmd+V 這個快捷鍵根本沒送到 App。切回英文輸入法就一切正常——這就是「有時候好、
+有時候壞」的全部真相，跟權限、逾時、焦點都無關。
+
+**A/B 實測**（透過 `hs` 執行，走 Hammerspoon 真正的那條路徑，輸入法為 TCIM 注音）：
+
+| 送法 | TextEdit 收到的內容 |
+|---|---|
+| `osascript keystroke "v" using command down` | 空的 |
+| Quartz `CGEventCreateKeyboardEvent(keycode 9)` + Command flag | `BBBB` ✅ |
+
+**修法**：`send_cmd_v()` 改用 Quartz 直接送 keycode 9（V 的**實體鍵位**）的 CGEvent，
+跟使用者自己按 Cmd+V 走同一條硬體按鍵路徑，不經過輸入法的字元層。
+沒有 Quartz 或送不出去才退回舊的 osascript，不會比原本更差。
+
+**這是第五個成因。** 前四個（剪貼簿還原太快、修飾鍵還按著、osascript 靜默失敗、
+焦點在自家視窗）全部修好之後，這個才浮出水面——而且它是唯一一個 `paste.log`
+會記成「成功」的。診斷時如果看到 `→ App｜文字` 一切正常卻還是沒貼進去，就是它。
+
+---
+
 ## 其他踩過的坑
 
 這幾條都是 2026-08-14 這天實際撞出來的，不是理論。
@@ -195,7 +258,8 @@ A/B 實測：
 
 ## 目前狀態
 
-**能用的**：熱鍵開始／停止、提示音、選單列、Dock App、Spark 辨識、歷史同步。
+**能用的**：熱鍵開始／停止、提示音、選單列、Dock App、Spark 辨識、歷史同步、
+面板加詞彙。
 
 **已知但沒解的**：`hs.task` 為什麼會凍結事件迴圈（見上面專章）。有可靠的規避方式，
 不影響使用。哪天升級後又出現「開得起來、停不掉」，第一個檢查

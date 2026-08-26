@@ -165,6 +165,22 @@ input[type=text] {
     </div>
   </div>
 
+  <div class="label">VOCAB</div>
+  <div class="card">
+    <div class="opt">
+      <div class="name">常用詞彙<div class="sub" id="vocabsub">讀取中…</div></div>
+    </div>
+    <input type="text" id="vocabword" spellcheck="false" placeholder="要記住的詞，例如人名">
+    <div class="btnrow"><button id="vocabadd">加入詞彙</button></div>
+    <div class="raw" id="vocabmsg"></div>
+    <div class="opt">
+      <div class="name" style="color:var(--steel);font-size:11px">
+        新加的詞會排到最前面（越前面越優先）。提示詞有長度上限而且早就滿了，
+        所以加一個通常會擠掉一個——擠掉誰會直接告訴你。加完辨識服務會自己重啟幾秒。
+      </div>
+    </div>
+  </div>
+
   <div class="label">GATE</div>
   <div class="card">
     <dl class="kv" id="kv"></dl>
@@ -321,6 +337,11 @@ window.VI = {
       $('health').textContent = s.health ? '已連線 SPARK' : (s.healthError || '連不上 SPARK');
       $('who').textContent = s.who && s.who !== 'unknown' ? s.who : '';
     }
+    // ── 詞彙表 ──
+    if (s.vocab) {
+      $('vocabsub').textContent = s.vocab.summary || '';
+      $('vocabmsg').textContent = s.vocab.msg || '';
+    }
     if (s.config) {
       if (document.activeElement !== $('server')) $('server').value = s.config.SERVER || '';
       $('trailing').checked = s.config.TRAILING_SPACE === '1';
@@ -338,6 +359,16 @@ $('repaste').onclick = () => send({action: 'repaste', text: lastText});
 $('rec').onclick     = () => send({action: 'toggleRecord'});
 $('openweb').onclick = () => send({action: 'openWeb'});
 $('update').onclick  = () => send({action: 'checkUpdate'});
+// 加詞：按鈕或直接按 Enter 都可以。送出後清空輸入框，免得連按兩次加成兩筆。
+const addVocab = () => {
+  const w = $('vocabword').value.trim();
+  if (!w) return;
+  $('vocabword').value = '';
+  $('vocabmsg').textContent = '加入中…';
+  send({action: 'addVocab', word: w});
+};
+$('vocabadd').onclick = addVocab;
+$('vocabword').onkeydown = e => { if (e.key === 'Enter') addVocab(); };
 $('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
 $('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e.target.value.trim()});
 // 留白＝清掉這台的覆蓋值，回頭跟著全域值。範圍外或不是純數字的值不寫入也不夾到
