@@ -17,8 +17,21 @@ local menubar = require("voice-input-menubar")
 
 local M = {}
 
+-- 開完面板一定要把 Hammerspoon 帶到前景。
+--
+-- 面板是 utility 樣式的視窗（NSPanel），而這種視窗在**擁有它的 App 不是前景**時
+-- 會被系統直接隱藏。快捷鍵一定是從別的 App 按下去的（Obsidian、瀏覽器…），
+-- 所以不 activate 的話：面板閃一下就不見，或是看得到卻打不了字。
+-- 排查時的實測：show() 之後視窗數 1 → 一失焦就變 0；補上 activate() 之後穩定留著。
+--
+-- 只在「開起來」的時候 activate。關閉時 activate 會把 Hammerspoon 叫到最前面，
+-- 那是使用者剛要離開面板的時刻，搶焦點很煩。
 M.hotkey = hs.hotkey.bind({"ctrl", "cmd"}, "v", function()
     menubar.toggle()
+    hs.timer.doAfter(0.08, function()
+        local app = hs.application.get("Hammerspoon")
+        if app and #app:allWindows() > 0 then app:activate() end
+    end)
 end)
 
 return M
