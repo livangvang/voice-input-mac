@@ -11,3 +11,6 @@ require("voice-input-chime")
 
 -- 超簡單語音輸入（修正 core.run 凍結事件迴圈，本地擴充）
 require("voice-input-run-fix")
+
+-- 超簡單語音輸入（⌃⌘V 開關面板，本地擴充）
+require("voice-input-panel-hotkey")

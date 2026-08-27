@@ -56,7 +56,7 @@ symlink 結構，會把內容直接寫進本專案的實體檔（`git diff` 看�
 | `bin/voice-input-mac.sh` | `hammerspoon/voice-input-chime.lua`（提示音） |
 | `hammerspoon/voice-input.lua` | `hammerspoon/voice-input-run-fix.lua`（修 core.run） |
 | `hammerspoon/voice-input-core.lua` | `app/`（整個 Dock App） |
-| `hammerspoon/voice-input-menubar.lua` | |
+| `hammerspoon/voice-input-menubar.lua` | `hammerspoon/voice-input-panel-hotkey.lua`（⌃⌘V 開面板） |
 | `hammerspoon/assets/` | |
 
 推回去的做法（兩個檔案都要，然後在 Spark 上 commit）：
@@ -87,12 +87,13 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 | `hammerspoon/voice-input-menubar.lua` | `~/.hammerspoon/voice-input-menubar.lua` | 選單列圖示與面板 | 上游 |
 | `hammerspoon/assets/` | `~/.hammerspoon/voice-input/` | 面板 HTML、Anton 字體 | 上游 |
 | `hammerspoon/voice-input-chime.lua` | `~/.hammerspoon/voice-input-chime.lua` | **提示音** | 本地 |
+| `hammerspoon/voice-input-panel-hotkey.lua` | `~/.hammerspoon/voice-input-panel-hotkey.lua` | **⌃⌘V 開關面板** | 本地 |
 | `app/` | — | **Dock App**（見 [app/README.md](./app/README.md)） | 本地 |
 | `hammerspoon/init.lua.reference` | （只是副本） | `~/.hammerspoon/init.lua` 現況備查 | — |
 
 沒有搬進來的（屬於系統或執行期狀態）：
 
-- `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，四個 `require`／`dofile` 各載入一塊
+- `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，五個 `require`／`dofile` 各載入一塊
 - `~/.hammerspoon/voice-meter-pos` — 舊版音量圓被拖到哪的位置記錄（新版沒有音量圓）
 - `~/.config/voice-input/config` — 本機設定檔（2026-08-14 起存在；目前有 `MAX_SECONDS`，門檻 `thold` 子指令與面板也寫這裡）
 
@@ -102,6 +103,9 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 
 面板上多了一塊 **VOCAB**：輸入一個詞、按「加入詞彙」，它就會進到 Spark 的
 `config/vocabulary.txt`，whisper 下一句就認得。
+
+面板用 **⌃⌘V** 開關（`voice-input-panel-hotkey.lua`，本地獨有），或點選單列那顆圖示。
+加快捷鍵的理由：選單列圖示待命時只是一個 16px 的小點、錄音時又變成跳動的秒數，很難瞄準——而詞彙表只能從面板加，它必須好開。
 
 它走的是新的 `POST /api/vocab`（Spark 端 `bin/voice-input-web`），不是 ssh 改檔案——
 面板只負責問和顯示，寫檔和重啟都在伺服器那邊做完。
