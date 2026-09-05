@@ -19,6 +19,7 @@ local core = require("voice-input-core")
 
 local NOTE_FILE = os.getenv("HOME") .. "/.hammerspoon/funk-note.aiff"
 local START_GAP = 0.17   -- 開始那兩聲之間的間隔（秒）
+local VOLUME    = 0.6    -- 音量，1.0 = 音檔原始音量（2026-09-05 從 1.0 降到 0.6）
 
 -- 三個獨立的 sound 物件：同一個物件連續播第二次會把第一次切掉，
 -- 「咚–咚」就會變成「咚」。要兩聲就得有兩個物件。
@@ -31,6 +32,12 @@ if not (startNoteA and startNoteB and stopNote) then
     -- 但不知道是檔案不見、還是事件沒進來。
     hs.printf("[voice-input-chime] 載入不到音檔：%s", NOTE_FILE)
     return
+end
+
+-- 音量統一在這裡設。hs.sound 的音量是每個物件各自持有的，所以三個都要設；
+-- 漏設任何一個，那一聲就會突然變大聲。
+for _, note in ipairs({ startNoteA, startNoteB, stopNote }) do
+    note:volume(VOLUME)
 end
 
 local function playStart()
