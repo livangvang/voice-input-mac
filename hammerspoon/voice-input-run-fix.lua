@@ -46,7 +46,11 @@ core.run = function(action)
 
     -- 結尾的 & 讓 shell 立刻返回，os.execute 只阻塞約 5ms（一次 fork+exec）。
     -- 這條路徑會被 keyDown 的 callback 呼叫，不能是同步等待。
-    os.execute(("%q %s >/dev/null 2>&1 &"):format(SCRIPT, action))
+    -- Hammerspoon 由 GUI 啟動時 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+    -- 腳本會找不到 Homebrew 裝的 sox / jq，直接 die 成「找不到 sox」。
+    -- 這裡補上 Homebrew 的 bin（Apple Silicon 與 Intel 兩種前綴都放）。
+    local BREW = "/opt/homebrew/bin:/usr/local/bin"
+    os.execute(("PATH=%s:$PATH %q %s >/dev/null 2>&1 &"):format(BREW, SCRIPT, action))
 end
 
 return { run = core.run }

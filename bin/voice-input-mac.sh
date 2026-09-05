@@ -39,6 +39,15 @@ MODIFIER_WAIT=1.5        # 送 Cmd+V 前最多等使用者放開修飾鍵多久
 
 [ -f "$CONF" ] && . "$CONF"
 
+# ---------- 一定要有 UTF-8 locale ----------
+# Hammerspoon 由 GUI 啟動，環境裡沒有 LANG／LC_ALL，bash 就退回 C locale。
+# 在 C locale 下 `printf | pbcopy` 會把非 ASCII 整串吃掉，剪貼簿變成**空的**——
+# Cmd+V 照樣送得出去、paste.log 也記成功，但輸入框什麼都沒有。
+# 症狀是「英數字貼得進去、中文永遠貼不進去」。實測 2026-09-05。
+export LANG="${LANG:-zh_TW.UTF-8}"
+export LC_ALL="${LC_ALL:-$LANG}"
+
+
 RUN="${TMPDIR:-/tmp}/voice-input"
 mkdir -p "$RUN"
 PIDFILE="${RUN}/rec.pid"
