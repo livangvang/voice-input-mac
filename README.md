@@ -139,24 +139,33 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 curl -s https://spark-cb4e.taild73ae6.ts.net/api/vocab | python3 -m json.tool
 ```
 
-### 刪詞與排序（2026-09-18）
+### 每人一份、TAG、刪詞（2026-09-18）
 
-面板的詞彙區下方列出**整份**詞彙表（上面的選單切「個人／共用」），照優先順序排。
-橘線以上是有進提示詞的，橘線以下存著但沒生效。每個詞有 ⇡（移到最前）、↑、↓、✕。
-✕ 要按兩下才會刪（3 秒內），刪掉沒有復原，只能重加。
+**共用詞彙表停用。** 每個人只有自己的 `vocabulary.<email>.txt`（Spark 的 `~/.config/voice-input/`）。
+原本共用的 72 個詞已經複製進兩個人的個人表；共用檔只剩註解，備份在
+`vocabulary.common.txt.bak-20260918`。API 收到 `scope: "common"` 或沒選「我是誰」一律 400。
+好處：自己的詞用滿整個提示詞預算，改完下一句就生效，不用重啟 whisper-server。
 
-方向是「詞隨便存、自己排優先」，不是「加一個擠掉一個」：224 token 是 whisper 的
-硬上限改不了，但哪些詞吃得到那塊預算，由使用者自己決定。
-
-API（Spark 端 `bin/voice-input-web`），`scope` 必填——刪錯份改不回來，不猜：
+**面板的詞是 TAG。** 實線＝有生效，虛線＝存著但沒生效（whisper 224 token 上限放不下）。
+點 TAG 本身＝移到最前面（它就生效了），✕＝刪除。刪除是面板先藏起來、**5 秒後才送出**，
+這段時間按「復原」就當沒發生——不用「刪了再加回去」，因為加回去會排到最前面，順序就亂了。
 
 ```bash
-POST /api/vocab/remove  {"word": "…", "scope": "personal"|"common"}
-POST /api/vocab/move    {"word": "…", "scope": "…", "direction": "top"|"up"|"down"}
+POST /api/vocab/remove  {"word": "…"}
+POST /api/vocab/move    {"word": "…", "direction": "top"|"up"|"down"}
 ```
 
-排序只在「詞」的那幾行之間搬，檔案裡的 `#` 註解留在原位。共用那份改完一樣會重啟
-whisper-server，個人那份下一句就生效。
+⚠️ **還沒處理**：Spark 桌機上的 `voice-input-switch`（GTK 設定視窗）的詞彙表分頁還是編
+`vocabulary.txt`＝共用那份。在那裡存檔，詞會寫回已停用的共用表，辨識時還是會被讀進去。
+
+### 面板是可以拖的浮動視窗（2026-09-18）
+
+- 有標題列，拖得動；位置存在 `hs.settings` 的 `voiceinput.panelFrame`，下次打開放回原處
+  （那個位置不在任何螢幕上時回到右上角）。
+- 點別的 App **不會**消失（實測切到 Finder 5 秒仍在螢幕上）。關法：⌃⌘V、標題列的紅點、Esc。
+- 開始錄音**不收起來**，改成把焦點還給原本在打字的 App（`focusBackToApp`）——
+  焦點留在面板的話，Cmd+V 會貼進面板自己。辨識中會再切一次。「重新貼上」也一樣。
+- 字比原本大 5px，面板 480×760。
 
 ---
 

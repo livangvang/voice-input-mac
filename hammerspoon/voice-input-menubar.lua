@@ -18,6 +18,11 @@ local bar, panel, tickTimer
 local state = {phase = "idle", elapsed = 0}
 local frontWindow = nil          -- 面板顯示前的作用中視窗，「重新貼上」要用
 
+-- 面板大小。字比原本大 5px（2026-09-18），寬度跟著放大，不然每行塞不下。
+local PANEL_W, PANEL_H = 480, 760
+-- 使用者拖過的位置存在這裡，下次打開放回原處。
+local PANEL_FRAME_KEY = "voiceinput.panelFrame"
+
 -- ── 選單列圖示 ────────────────────────────────────────
 -- 用 hs.canvas 執行時畫，不夾帶圖檔（少兩個檔案要下載、也不用管 @1x/@2x）。
 --
@@ -82,51 +87,31 @@ local function webviewAvailable()
 end
 
 -- ── 詞彙表 ────────────────────────────────────────────
--- 詞彙表在 Spark 上，而且提示詞是 whisper-server **啟動時**就寫死在指令列上的，
--- 所以加詞必須經過伺服器（它會寫檔案再重啟）。這裡只負責問和顯示。
+-- 詞彙表在 Spark 上，這裡只負責問和顯示；寫檔都在伺服器那邊做。
+--
+-- 2026-09-18 起每個人只有自己一份（共用詞彙表停用），全部帶 X-Voice-User。
+-- 個人詞是逐請求帶進提示詞的，改完下一句就生效，不用重啟任何服務。
 --
 -- 用 hs.http 而不是 hs.task 跑 curl：README 那條「hs.task 會凍結事件迴圈」的坑
 -- 至今原因未明，純 Lua 的 hs.http 不 fork，不必去碰那顆地雷。
 local vocab = {summary = "讀取中…", msg = ""}
 
--- 摘要第一句講共用詞彙表（by_user 裡 user == "" 那列，見 build-prompt.py 的 overview）；
--- 第二句講這個人的個人詞——有個人詞時伺服器會逐請求帶上「個人 + 共用」，Mac 上也生效。
-local function serverRow(data)
-    if type(data.by_user) ~= "table" then return nil end
-    for _, row in ipairs(data.by_user) do
-        if type(row) == "table" and row.user == "" and type(row.common) == "table" then
-            return row
-        end
-    end
-    return nil
+local function listOf(v)
+    return type(v) == "table" and v or {}
 end
 
--- 帶 X-Voice-User 才讀得到這個人的個人詞數量（摘要的第二句要用）。
 local function vocabRefresh()
     hs.http.asyncGet(core.server() .. "/api/vocab", {["X-Voice-User"] = core.user()}, function(code, body)
         local ok, data = pcall(hs.json.decode, body or "")
-        if code == 200 and ok and type(data) == "table" and data.words then
-            local row = serverRow(data)
-            local lines = {}
-            if row then
-                lines[#lines + 1] = string.format("共用 %d 個詞，其中 %d 個真的進得了伺服器的提示詞",
-                                                  row.common.words or 0, row.common.used or 0)
+        if code == 200 and ok and type(data) == "table" and type(data.personal) == "table" then
+            -- 檔案順序＝ used 接 dropped（放不下的從尾巴砍，見 build-prompt.py）
+            local used, dropped = listOf(data.personal.used), listOf(data.personal.dropped)
+            vocab.used, vocab.dropped = used, dropped
+            if #used + #dropped == 0 then
+                vocab.summary = "還沒有詞。加進來的詞下一句就生效。"
             else
-                lines[#lines + 1] = "讀不到伺服器提示詞的占用（伺服器版本太舊？）"
+                vocab.summary = string.format("%d 個詞，前 %d 個有生效", #used + #dropped, #used)
             end
-            local mine = type(data.personal) == "table" and data.personal.words or 0
-            if mine > 0 then
-                local used = type(data.personal.used) == "table" and #data.personal.used or 0
-                lines[#lines + 1] = string.format("你的個人詞 %d 個，其中 %d 個進得了你的提示詞", mine, used)
-            end
-            vocab.summary = table.concat(lines, "\n")
-            -- 面板的詞彙清單：每份照檔案順序＝ used 接 dropped（放不下的從尾巴砍）
-            local function split(part)
-                part = type(part) == "table" and part or {}
-                return {used = type(part.used) == "table" and part.used or {},
-                        dropped = type(part.dropped) == "table" and part.dropped or {}}
-            end
-            vocab.lists = {personal = split(data.personal), common = split(data.common)}
         else
             vocab.summary = "讀不到詞彙表（HTTP " .. tostring(code) .. "）"
         end
@@ -134,79 +119,61 @@ local function vocabRefresh()
     end)
 end
 
--- 加完詞的回報要講三件事：加成功沒有、**這個詞會不會真的生效**、擠掉了誰。
--- 提示詞有 224 token 的硬上限而且早就滿了，加進去卻不生效是常態不是例外——
--- 不明講的話，使用者會以為加了就有效，然後怪辨識不準。
---
--- scope 是面板上選的「加到個人／加到共用」。預設個人：只影響自己，下一句就生效；
--- 共用大家都吃得到，但要重啟辨識服務幾秒。
-local function vocabAdd(word, scope)
-    if scope ~= "common" then scope = "personal" end
-    vocab.msg = scope == "common" and "加入中…（辨識服務要重啟幾秒）" or "加入中…"
+-- 共用的錯誤訊息：伺服器有給就用它的，沒有就講 HTTP 狀態
+local function vocabError(prefix, code, ok, data)
+    local err = (ok and type(data) == "table" and data.error) or ("HTTP " .. tostring(code))
+    return "❌ " .. prefix .. err
+end
+
+-- 加完詞要講兩件事：這個詞有沒有生效、它把誰擠到沒生效。
+local function vocabAdd(word)
+    vocab.msg = "加入中…"
     M.render()
-    hs.http.asyncPost(core.server() .. "/api/vocab",
-                      hs.json.encode({word = word, scope = scope}),
+    hs.http.asyncPost(core.server() .. "/api/vocab", hs.json.encode({word = word}),
                       {["Content-Type"] = "application/json", ["X-Voice-User"] = core.user()},
         function(code, body)
             local ok, data = pcall(hs.json.decode, body or "")
             if code == 200 and ok and type(data) == "table" then
                 local lines = {}
-                -- 舊伺服器不回 scope，當成它照 X-Voice-User 寫進了個人檔
-                local personal = data.scope == "personal" or data.scope == nil
-                local where = personal and "你的個人詞彙表" or "共用詞彙表"
                 if not data.added then
-                    lines[#lines + 1] = "「" .. word .. "」本來就在" .. where .. "裡了"
+                    lines[#lines + 1] = "「" .. word .. "」本來就在裡面了"
                 elseif data.effective then
-                    lines[#lines + 1] = "✅ 已加入" .. where .. "「" .. word .. "」，下一句就生效"
+                    lines[#lines + 1] = "✅ 已加入「" .. word .. "」，下一句就生效"
                 else
-                    lines[#lines + 1] = "⚠️ 已加入" .. where .. "「" .. word .. "」，但提示詞塞不下，這個詞不會生效"
+                    lines[#lines + 1] = "⚠️ 已加入「" .. word .. "」，但放不下，還沒生效"
                 end
-                if type(data.pushed_out) == "table" and #data.pushed_out > 0 then
-                    lines[#lines + 1] = "被它擠掉的詞：" .. table.concat(data.pushed_out, "、")
-                end
-                if not personal and data.restarted == false then
-                    lines[#lines + 1] = "（辨識服務還沒重啟完成，再等一下）"
+                local out = listOf(data.pushed_out)
+                if #out > 0 then
+                    lines[#lines + 1] = "變成沒生效的詞：" .. table.concat(out, "、")
                 end
                 vocab.msg = table.concat(lines, "\n")
-                vocabRefresh()
             else
-                local err = (ok and type(data) == "table" and data.error)
-                            or ("HTTP " .. tostring(code))
-                vocab.msg = "❌ 加入失敗：" .. err
-                M.render()
+                vocab.msg = vocabError("加入失敗：", code, ok, data)
             end
+            vocabRefresh()
         end)
 end
 
--- 刪詞／排序。op 是 "remove" 或 "move"（direction: top/up/down）。
--- 共用那份改完伺服器要重啟辨識服務幾秒，所以要先講。
-local VOCAB_MOVE_TEXT = {top = "移到最前面", up = "往前移", down = "往後移"}
-local function vocabEdit(op, word, scope, direction)
-    if scope ~= "common" and scope ~= "personal" then return end
-    local waiting = scope == "common" and "（共用詞彙表，辨識服務要重啟幾秒）" or ""
-    vocab.msg = (op == "remove" and "刪除中…" or "移動中…") .. waiting
-    M.render()
+-- 刪詞（op = "remove"）或移到最前面（op = "move", direction = "top"）。
+-- 「復原刪除」是面板 JS 延遲 5 秒才送 remove，不在這裡。
+local function vocabEdit(op, word, direction)
     hs.http.asyncPost(core.server() .. "/api/vocab/" .. op,
-                      hs.json.encode({word = word, scope = scope, direction = direction}),
+                      hs.json.encode({word = word, direction = direction}),
                       {["Content-Type"] = "application/json", ["X-Voice-User"] = core.user()},
         function(code, body)
             local ok, data = pcall(hs.json.decode, body or "")
             if code == 200 and ok and type(data) == "table" then
                 if data.result == "removed" then
                     vocab.msg = "🗑 已刪除「" .. word .. "」"
-                elseif data.result == "edge" then
-                    vocab.msg = "「" .. word .. "」已經到底了"
+                elseif data.result == "moved" then
+                    vocab.msg = "已把「" .. word .. "」移到最前面" .. (data.effective and "，✅ 有生效" or "")
                 else
-                    vocab.msg = "已把「" .. word .. "」" .. (VOCAB_MOVE_TEXT[direction] or "移動")
-                                .. (data.effective and "，✅ 有生效" or "，⚠️ 還沒生效，再往前移")
+                    vocab.msg = ""
                 end
-                vocabRefresh()
             else
-                local err = (ok and type(data) == "table" and data.error)
-                            or ("HTTP " .. tostring(code) .. "（Spark 版本太舊？）")
-                vocab.msg = "❌ " .. err
-                vocabRefresh()
+                vocab.msg = vocabError("", code, ok, data)
             end
+            vocabRefresh()
         end)
 end
 
@@ -303,6 +270,19 @@ local function learnSave(bad, good)
         end)
 end
 
+-- 焦點在面板上時，把它還給使用者原本在打字的 App。
+-- 面板會常駐在畫面上，而貼上是「送 Cmd+V 給最前面的 App」——焦點留在面板的話，
+-- 字就貼進面板自己了。優先用 lastApp（一直在追），沒有才用打開面板當時的視窗。
+local function focusBackToApp()
+    local front = hs.application.frontmostApplication()
+    if front and isOtherApp(front) then return end
+    if lastApp and lastApp:isRunning() then
+        lastApp:activate()
+    elseif frontWindow then
+        frontWindow:focus()
+    end
+end
+
 local function handleMessage(body)
     if type(body) ~= "table" then return end
     local a = body.action
@@ -314,11 +294,11 @@ local function handleMessage(body)
         end
     elseif a == "addVocab" then
         local w = tostring(body.word or ""):match("^%s*(.-)%s*$")
-        if w ~= "" then vocabAdd(w, body.scope) end
-    elseif a == "removeVocab" or a == "moveVocab" then
-        if type(body.word) == "string" and body.word ~= "" then
-            vocabEdit(a == "removeVocab" and "remove" or "move", body.word, body.scope, body.direction)
-        end
+        if w ~= "" then vocabAdd(w) end
+    elseif a == "removeVocab" then
+        if type(body.word) == "string" and body.word ~= "" then vocabEdit("remove", body.word) end
+    elseif a == "vocabTop" then
+        if type(body.word) == "string" and body.word ~= "" then vocabEdit("move", body.word, "top") end
     elseif a == "copy" then
         if body.text and body.text ~= "" then
             hs.pasteboard.setContents(body.text)
@@ -328,10 +308,10 @@ local function handleMessage(body)
         -- 必須切回**面板顯示之前**的那個視窗。等到要貼上才問「現在哪個視窗是
         -- 作用中的」，答案會是面板自己，文字就貼到面板身上了。
         -- （桌面版的預覽視窗踩過一模一樣的坑，見 README 的「先看過再貼上」。）
+        -- 面板不收起來（它是常駐的浮動視窗），只把焦點切回去。
         if body.text and body.text ~= "" then
             hs.pasteboard.setContents(body.text)
-            M.hide()
-            if frontWindow then frontWindow:focus() end
+            focusBackToApp()
             hs.timer.doAfter(0.15, function()
                 hs.eventtap.keyStroke({"cmd"}, "v")
             end)
@@ -372,11 +352,24 @@ local function ensurePanel()
     end
     local ucc = hs.webview.usercontent.new("vi")
     ucc:setCallback(function(msg) handleMessage(msg.body) end)
-    panel = hs.webview.new({x = 0, y = 0, w = 380, h = 620}, {}, ucc)
+    panel = hs.webview.new({x = 0, y = 0, w = PANEL_W, h = PANEL_H}, {}, ucc)
     -- 這幾個都用 pcall 包起來：hs.webview 的視窗樣式 API 在不同 macOS／
     -- Hammerspoon 版本上行為不一致，任何一個失敗都不該讓面板整個開不起來。
     -- 失敗的後果最多是「多一圈視窗外框」，不是功能壞掉。
-    pcall(function() panel:windowStyle(hs.webview.windowMasks.utility) end)
+    --
+    -- titled：有標題列才拖得動。closable：標題列的關閉鈕＝收起來（deleteOnClose 預設 false，
+    -- 按了只是隱藏，下次 ⌃⌘V 還是同一個面板）。
+    -- 點別的 App 時面板**不會**消失（2026-09-18 實測：切到 Finder 5 秒後仍在螢幕上）。
+    local masks = hs.webview.windowMasks
+    pcall(function() panel:windowStyle(masks.titled | masks.closable | masks.utility) end)
+    pcall(function() panel:windowTitle("超簡單語音輸入") end)
+    pcall(function()
+        panel:windowCallback(function(action, _, frame)
+            if action == "frameChange" and frame then
+                hs.settings.set(PANEL_FRAME_KEY, {x = frame.x, y = frame.y})
+            end
+        end)
+    end)
     pcall(function() panel:level(hs.drawing.windowLevels.floating) end)
     pcall(function() panel:allowTextEntry(true) end)   -- 設定欄位要能打字
     pcall(function() panel:closeOnEscape(true) end)
@@ -384,21 +377,35 @@ local function ensurePanel()
     return panel
 end
 
+-- 放回上次拖到的位置；那個位置已經不在任何螢幕上（外接螢幕拔掉了）就回到預設的右上角。
+-- 高度不超過螢幕，不然標題列會跑到選單列後面，拖不回來。
 local function positionPanel(p)
+    local saved = hs.settings.get(PANEL_FRAME_KEY)
+    if type(saved) == "table" and tonumber(saved.x) and tonumber(saved.y) then
+        for _, scr in ipairs(hs.screen.allScreens()) do
+            local sf = scr:frame()
+            if saved.x >= sf.x - PANEL_W / 2 and saved.x < sf.x + sf.w - 40
+               and saved.y >= sf.y and saved.y < sf.y + sf.h - 40 then
+                p:frame({x = saved.x, y = saved.y, w = PANEL_W, h = math.min(PANEL_H, sf.h)})
+                return
+            end
+        end
+    end
     local screen = hs.screen.mainScreen():frame()
-    local x = screen.x + screen.w - 380 - 12
+    local x = screen.x + screen.w - PANEL_W - 12
     local ok, f = pcall(function() return bar:frame() end)
     if ok and f and f.x then
-        x = math.min(f.x + f.w - 380, screen.x + screen.w - 380 - 12)
+        x = math.min(f.x + f.w - PANEL_W, screen.x + screen.w - PANEL_W - 12)
     end
-    p:frame({x = math.max(screen.x + 8, x), y = screen.y + 4, w = 380, h = 620})
+    p:frame({x = math.max(screen.x + 8, x), y = screen.y + 4, w = PANEL_W, h = math.min(PANEL_H, screen.h - 8)})
 end
 
 function M.show()
     local p = ensurePanel()
     if not p then return end
     frontWindow = hs.window.frontmostWindow()
-    positionPanel(p)
+    -- 已經開著就不要重新定位，不然使用者剛拖好的位置會被拉回去
+    if not p:isVisible() then positionPanel(p) end
     p:show()
     core.refreshHealth()
     core.refreshHistory()
@@ -455,9 +462,10 @@ end
 -- ── 事件接線 ──────────────────────────────────────────
 core.on("phase", function(p)
     state.phase = p
-    -- 開始錄音就把面板收起來。面板是會取得焦點的視窗（否則設定欄位打不了字），
-    -- 留著的話貼上目標會變成面板自己。這條規則堵死那個唯一的破口。
-    if p == "recording" then M.hide() end
+    -- 面板留在畫面上（看得到秒數），但焦點要還給原本的 App：
+    -- 面板是會取得焦點的視窗（否則設定欄位打不了字），焦點留著的話貼上目標會變成面板自己。
+    -- 辨識中再切一次：錄音時使用者可能又點了面板。
+    if p == "recording" or p == "transcribing" then focusBackToApp() end
     if p == "recording" then
         if not tickTimer then
             tickTimer = hs.timer.doEvery(0.1, function()

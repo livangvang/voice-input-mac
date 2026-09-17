@@ -36,7 +36,7 @@
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--ink); color: var(--fg);
-  font-family: var(--body); font-size: 13px; line-height: 1.6;
+  font-family: var(--body); font-size: 18px; line-height: 1.6;
   display: flex; flex-direction: column;
 }
 
@@ -52,28 +52,28 @@ body {
 .head { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
 .head .kicker {
   margin-left: auto; font-family: var(--display);
-  font-size: 10px; letter-spacing: .28em; color: var(--steel);
+  font-size: 15px; letter-spacing: .28em; color: var(--steel);
 }
-.head .mark { font-family: var(--display); font-size: 13px; letter-spacing: .2em; color: var(--fg); }
+.head .mark { font-family: var(--display); font-size: 18px; letter-spacing: .2em; color: var(--fg); }
 .head .user {
   -webkit-appearance: none; appearance: none;
   background: transparent; border: 1px solid var(--line); border-radius: 0;
-  color: var(--fg); font-family: var(--body); font-size: 11px;
+  color: var(--fg); font-family: var(--body); font-size: 16px;
   padding: 2px 8px; cursor: pointer;
 }
 .head .user:hover, .head .user:focus { border-color: var(--steel); outline: none; }
 .head .user option { background: var(--ink); color: var(--fg); }
 
 .label {
-  font-family: var(--display); font-size: 9px; letter-spacing: .24em;
+  font-family: var(--display); font-size: 14px; letter-spacing: .24em;
   color: var(--steel); margin: 14px 0 6px;
 }
 .card { border: 1px solid var(--line); padding: 12px; }
 
 /* ── 狀態 ── */
-.readout { font-family: var(--display); font-size: 40px; line-height: 1; letter-spacing: .02em; }
-.readout .unit { font-size: 13px; color: var(--steel); margin-left: 4px; letter-spacing: .1em; }
-.state { font-size: 12px; color: var(--dim); margin-top: 4px; }
+.readout { font-family: var(--display); font-size: 45px; line-height: 1; letter-spacing: .02em; }
+.readout .unit { font-size: 18px; color: var(--steel); margin-left: 4px; letter-spacing: .1em; }
+.state { font-size: 17px; color: var(--dim); margin-top: 4px; }
 .state.live { color: var(--orange); }
 
 /* ── 音量條 ──
@@ -88,19 +88,19 @@ body {
 .meter-mark { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--steel); left: 0; }
 .meter-legend {
   position: relative; height: 14px;
-  font-family: var(--display); font-size: 9px; letter-spacing: .2em; color: var(--steel);
+  font-family: var(--display); font-size: 14px; letter-spacing: .2em; color: var(--steel);
 }
 .meter-legend .mk { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; color: var(--dim); }
-.caption { font-size: 11px; color: var(--dim); }
+.caption { font-size: 16px; color: var(--dim); }
 .caption.over { color: var(--orange); }
 
 /* ── 結果 ── */
-.result { font-size: 14px; color: var(--fg); -webkit-user-select: text; word-break: break-word; }
+.result { font-size: 19px; color: var(--fg); -webkit-user-select: text; word-break: break-word; }
 .result.empty { color: var(--steel); }
-.meta { font-size: 11px; color: var(--steel); margin-top: 6px; }
+.meta { font-size: 16px; color: var(--steel); margin-top: 6px; }
 .btnrow { display: flex; gap: 6px; margin-top: 10px; }
 button {
-  font-family: var(--body); font-size: 12px; color: var(--fg);
+  font-family: var(--body); font-size: 17px; color: var(--fg);
   background: transparent; border: 1px solid var(--line); border-radius: 0;
   padding: 5px 10px; cursor: pointer;
 }
@@ -111,53 +111,57 @@ button.primary { border-color: var(--orange); }
 
 /* ── 學起來 ── */
 .learn { margin-top: 10px; padding: 10px; border: 1px solid var(--orange); }
-.learn .ask { font-size: 11px; color: var(--dim); }
-.learn .rule { font-size: 15px; word-break: break-word; margin: 2px 0 8px; }
+.learn .ask { font-size: 16px; color: var(--dim); }
+.learn .rule { font-size: 20px; word-break: break-word; margin: 2px 0 8px; }
 .learn .btnrow { align-items: center; margin-top: 0; }
-.learn .count { font-size: 11px; color: var(--steel); }
+.learn .count { font-size: 16px; color: var(--steel); }
 
 /* ── 閘門統計 ── */
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 11px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 16px; }
 .kv dt { font-family: var(--display); letter-spacing: .16em; color: var(--steel); }
 .kv dd { margin: 0; color: var(--dim); }
-.raw { font-size: 10px; color: var(--steel); word-break: break-all; white-space: pre-wrap; max-height: 90px; overflow: auto; }
+.raw { font-size: 15px; color: var(--steel); word-break: break-all; white-space: pre-wrap; max-height: 90px; overflow: auto; }
 
 /* ── 歷史 ── */
 .row { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
 .row:hover { background: #0a0a0a; }
-.row .t { font-family: var(--display); font-size: 10px; color: var(--steel); flex: none; padding-top: 2px; }
-.row .src { flex: none; font-size: 10px; padding-top: 2px; }
-.row .x { flex: 1; font-size: 12px; word-break: break-word; }
+.row .t { font-family: var(--display); font-size: 15px; color: var(--steel); flex: none; padding-top: 2px; }
+.row .src { flex: none; font-size: 15px; padding-top: 2px; }
+.row .x { flex: 1; font-size: 17px; word-break: break-word; }
 
 /* ── 設定 ── */
 .opt { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .opt .name { flex: 1; }
-.opt .sub { font-size: 10px; color: var(--steel); }
+.opt .sub { font-size: 15px; color: var(--steel); }
 .opt input[type=checkbox] { accent-color: var(--orange); width: 15px; height: 15px; }
-/* ── 詞彙清單 ── */
-.vlist { margin-top: 10px; max-height: 260px; overflow-y: auto; border-top: 1px solid var(--line); }
-.vrow { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line); }
-.vrow .n { font-family: var(--display); font-size: 9px; color: var(--steel); width: 20px; flex: none; text-align: right; }
-.vrow .w { flex: 1; font-size: 12px; word-break: break-all; -webkit-user-select: text; }
-.vrow.off .w { color: var(--steel); }
-.vrow button { padding: 0 6px; font-size: 11px; line-height: 18px; border-color: transparent; color: var(--dim); }
-.vrow button:hover { border-color: var(--steel); color: var(--fg); }
-.vrow button.danger { border-color: var(--orange); color: var(--orange); }
-.vcut {
-  font-size: 10px; color: var(--orange); padding: 6px 0 4px; border-bottom: 1px solid var(--line);
+/* ── 詞彙 TAG ──
+   一個詞一顆 TAG，自動換行排滿。順序就是優先順序（左上最優先）。
+   沒生效的是虛線灰色；點 TAG 本身＝移到最前面，右邊的 ✕＝刪除（5 秒內可復原）。 */
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 320px; overflow-y: auto; }
+.tag {
+  display: inline-flex; align-items: center; border: 1px solid var(--steel);
+  font-size: 17px; line-height: 1.5; max-width: 100%;
 }
-.vempty { font-size: 11px; color: var(--steel); padding: 8px 0; }
+.tag .w { padding: 1px 4px 1px 8px; cursor: pointer; word-break: break-all; }
+.tag .x { padding: 1px 8px; cursor: pointer; color: var(--dim); border-left: 1px solid var(--line); }
+.tag .x:hover { color: var(--orange); }
+.tag.off { border-style: dashed; border-color: var(--line); }
+.tag.off .w { color: var(--steel); }
+.tag.off .w:hover { color: var(--fg); }
+.tags .cut { flex-basis: 100%; font-size: 15px; color: var(--orange); margin-top: 4px; }
+.vempty { font-size: 16px; color: var(--steel); padding: 8px 0; }
+.undo { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 16px; color: var(--dim); }
 
 input[type=text] {
   background: #0a0a0a; border: 1px solid var(--line); color: var(--fg);
-  font-family: var(--body); font-size: 12px; padding: 4px 6px; width: 100%;
+  font-family: var(--body); font-size: 17px; padding: 4px 6px; width: 100%;
   -webkit-user-select: text;
 }
 
 .foot {
   flex: none; display: flex; align-items: center; gap: 8px;
   padding: 8px 16px; border-top: 1px solid var(--line);
-  font-family: var(--display); font-size: 9px; letter-spacing: .2em; color: var(--steel);
+  font-family: var(--display); font-size: 14px; letter-spacing: .2em; color: var(--steel);
 }
 .foot .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--steel); }
 .foot .dot.ok { background: var(--orange); }
@@ -218,22 +222,20 @@ input[type=text] {
     </div>
     <input type="text" id="vocabword" spellcheck="false" placeholder="要記住的詞，例如人名">
     <div class="btnrow">
-      <!-- 預設個人：只影響自己，不用重啟辨識服務。同一個選單也決定下面列出哪一份 -->
-      <select id="vocabscope" class="user" aria-label="哪一份詞彙表">
-        <option value="personal" selected>個人詞彙表</option>
-        <option value="common">共用詞彙表</option>
-      </select>
       <button id="vocabadd">加入詞彙</button>
     </div>
     <div class="raw" id="vocabmsg"></div>
-    <!-- 全部的詞，照優先順序。⇡ 移到最前、↑↓ 挪一格、✕ 刪除（按兩下才刪） -->
-    <div class="vlist" id="vlist"><div class="vempty">讀取中…</div></div>
+    <!-- 刪除先藏起來 VOCAB_UNDO_SECONDS 秒，時間到才真的送出；這段時間可以復原 -->
+    <div class="undo" id="undobox" hidden>
+      <span id="undotext"></span><button id="undobtn">復原</button>
+    </div>
+    <!-- 全部的詞，照優先順序。點 TAG＝移到最前面，✕＝刪除 -->
+    <div class="tags" id="vlist"><div class="vempty">讀取中…</div></div>
     <div class="opt">
-      <div class="name" style="color:var(--steel);font-size:11px">
-        詞要存幾個都可以，但 whisper 一次只吃得下前面幾十個——越前面越優先，
-        橘線以下的詞存著但目前沒生效，想讓它生效就往前移。新加的詞會排到最前面。
-        個人詞彙表只影響你自己，下一句就生效；
-        共用詞彙表大家都吃得到，改完辨識服務會自己重啟幾秒。
+      <div class="name" style="color:var(--steel);font-size: 16px">
+        詞要存幾個都可以，但 whisper 一次只吃得下前面幾十個。
+        實線的有生效，虛線的存著但沒生效——點一下 TAG 就移到最前面，它就生效了。
+        這是你自己的詞彙表，改完下一句就生效。
       </div>
     </div>
   </div>
@@ -263,7 +265,7 @@ input[type=text] {
              style="width:72px;text-align:right">
     </div>
     <div class="opt">
-      <div class="name" style="color:var(--steel);font-size:11px">
+      <div class="name" style="color:var(--steel);font-size: 16px">
         MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，所以門檻可以每台各設一個。
         這裡填的數字只影響這台 Mac，不會動到桌機口述和手機版。
         參考上面的「上次量到」：門檻要低於你講話的音量、高於安靜時的音量。
@@ -347,63 +349,67 @@ function learnDiff(original, selected) {
   return {bad, good};
 }
 
-// ── 詞彙清單 ──
-// Lua 每 0.1 秒就可能 push 一次，清單只在內容或選的那份變了才重畫——
-// 不然滑鼠 hover 和「確定刪除？」的狀態會一直被洗掉。
+// ── 詞彙 TAG ──
+// Lua 錄音時每 0.1 秒 push 一次，TAG 只在內容變了才重畫——不然滑鼠 hover 會一直被洗掉。
 // 空的 Lua table 會被 hs.json 編成 {}，所以一律過 arr()。
 const arr = v => Array.isArray(v) ? v : [];
-let vocabLists = null, vocabDrawn = '', vocabArmed = null, vocabArmTimer = null;
-const VOCAB_ARM_SECONDS = 3;
+let vocabUsed = null, vocabDropped = [], vocabDrawn = '';
+// 刪除：先從畫面上拿掉，VOCAB_UNDO_SECONDS 秒後才真的送出。期間按「復原」就當沒發生。
+// 用延遲而不是「刪了再加回去」：加回去會排到最前面，原本的優先順序就亂了。
+const VOCAB_UNDO_SECONDS = 5;
+let pendingDelete = null;    // {word, timer}
 
 function renderVocabList(force) {
-  const scope = $('vocabscope').value;
-  const part = vocabLists && vocabLists[scope];
-  const key = scope + JSON.stringify(part || null);
+  if (vocabUsed === null) return;
+  const hide = pendingDelete ? pendingDelete.word : null;
+  const used = vocabUsed.filter(w => w !== hide), dropped = vocabDropped.filter(w => w !== hide);
+  const key = JSON.stringify([used, dropped]);
   if (!force && key === vocabDrawn) return;
   vocabDrawn = key;
-  if (!part) { $('vlist').innerHTML = '<div class="vempty">讀取中…</div>'; return; }
-  const used = arr(part.used), dropped = arr(part.dropped);
   if (!used.length && !dropped.length) {
-    $('vlist').innerHTML = '<div class="vempty">這份還沒有詞</div>';
+    $('vlist').innerHTML = '<div class="vempty">還沒有詞</div>';
     return;
   }
-  const all = used.concat(dropped);
-  const row = (w, i) =>
-    (i === used.length ? '<div class="vcut">以下 ' + dropped.length + ' 個沒生效 · 往前移才會生效</div>' : '') +
-    '<div class="vrow' + (i >= used.length ? ' off' : '') + '" data-w="' + esc(w) + '">' +
-      '<span class="n">' + (i + 1) + '</span><span class="w">' + esc(w) + '</span>' +
-      '<button data-op="top" title="移到最前面"' + (i === 0 ? ' disabled' : '') + '>⇡</button>' +
-      '<button data-op="up" title="往前移"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
-      '<button data-op="down" title="往後移"' + (i === all.length - 1 ? ' disabled' : '') + '>↓</button>' +
-      '<button data-op="remove" title="刪除（按兩下）">✕</button>' +
-    '</div>';
-  $('vlist').innerHTML = all.map(row).join('');
+  const tag = (w, off) =>
+    '<span class="tag' + (off ? ' off' : '') + '" data-w="' + esc(w) + '">' +
+      '<span class="w" title="' + (off ? '沒生效 · 點一下移到最前面' : '點一下移到最前面') + '">' + esc(w) + '</span>' +
+      '<span class="x" title="刪除">✕</span></span>';
+  $('vlist').innerHTML = used.map(w => tag(w, false)).join('') +
+    (dropped.length ? '<div class="cut">以下 ' + dropped.length + ' 個沒生效</div>' : '') +
+    dropped.map(w => tag(w, true)).join('');
 }
 
-// 刪除要按兩下：第一下變成「確定刪除？」，VOCAB_ARM_SECONDS 秒內再按才真的刪。
-// 刪掉的詞沒有復原，只能重加（重加會排到最前面，不在原位）。
+function commitDelete() {
+  if (!pendingDelete) return;
+  const {word, timer} = pendingDelete;
+  clearTimeout(timer);
+  pendingDelete = null;
+  $('undobox').hidden = true;
+  send({action: 'removeVocab', word});
+}
+
 $('vlist').onclick = e => {
-  const btn = e.target.closest('button');
-  const rowEl = btn && btn.closest('.vrow');
-  if (!rowEl || btn.disabled) return;
-  const word = rowEl.dataset.w, scope = $('vocabscope').value, op = btn.dataset.op;
-  if (op === 'remove') {
-    if (vocabArmed !== btn) {
-      clearTimeout(vocabArmTimer);
-      if (vocabArmed) { vocabArmed.textContent = '✕'; vocabArmed.className = ''; }
-      vocabArmed = btn;
-      btn.textContent = '確定刪除？'; btn.className = 'danger';
-      vocabArmTimer = setTimeout(() => {
-        btn.textContent = '✕'; btn.className = ''; vocabArmed = null;
-      }, VOCAB_ARM_SECONDS * 1000);
-      return;
-    }
-    clearTimeout(vocabArmTimer); vocabArmed = null;
-    send({action: 'removeVocab', word, scope});
-  } else {
-    send({action: 'moveVocab', word, scope, direction: op});
+  const tagEl = e.target.closest('.tag');
+  if (!tagEl) return;
+  const word = tagEl.dataset.w;
+  if (e.target.closest('.x')) {
+    commitDelete();                         // 上一個還在等的先送出，一次只留一個可以復原
+    pendingDelete = {word, timer: setTimeout(commitDelete, VOCAB_UNDO_SECONDS * 1000)};
+    $('undotext').textContent = '已刪除「' + word + '」';
+    $('undobox').hidden = false;
+    renderVocabList(true);
+  } else if (e.target.closest('.w')) {
+    if (vocabUsed[0] === word) return;      // 已經是第一個
+    $('vocabmsg').textContent = '移動中…';
+    send({action: 'vocabTop', word});
   }
-  $('vocabmsg').textContent = op === 'remove' ? '刪除中…' : '移動中…';
+};
+$('undobtn').onclick = () => {
+  if (!pendingDelete) return;
+  clearTimeout(pendingDelete.timer);
+  pendingDelete = null;
+  $('undobox').hidden = true;
+  renderVocabList(true);
 };
 
 let learnRule = null, learnTimer = null, learnTick = null;
@@ -541,8 +547,10 @@ window.VI = {
     if (s.vocab) {
       $('vocabsub').textContent = s.vocab.summary || '';
       $('vocabmsg').textContent = s.vocab.msg || '';
-      vocabLists = s.vocab.lists || null;
-      renderVocabList();
+      if (s.vocab.used !== undefined) {
+        vocabUsed = arr(s.vocab.used); vocabDropped = arr(s.vocab.dropped);
+        renderVocabList();
+      }
     }
     // 我是誰：Lua 已經把清單外的值退回預設了，這裡照畫
     if (s.user && document.activeElement !== $('user')) $('user').value = s.user;
@@ -580,10 +588,9 @@ const addVocab = () => {
   if (!w) return;
   $('vocabword').value = '';
   $('vocabmsg').textContent = '加入中…';
-  send({action: 'addVocab', word: w, scope: $('vocabscope').value});
+  send({action: 'addVocab', word: w});
 };
 $('vocabadd').onclick = addVocab;
-$('vocabscope').onchange = () => renderVocabList(true);
 $('vocabword').onkeydown = e => { if (e.key === 'Enter') addVocab(); };
 $('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
 $('user').onchange     = e => send({action: 'setUser', user: e.target.value});
