@@ -134,6 +134,12 @@ button.primary { border-color: var(--orange); }
 .opt .name { flex: 1; }
 .opt .sub { font-size: 15px; color: var(--steel); }
 .opt input[type=checkbox] { accent-color: var(--orange); width: 15px; height: 15px; }
+/* ── 少用的東西收起來 ── */
+.more > summary { cursor: pointer; list-style: none; margin-top: 18px; }
+.more > summary::before { content: '▸ '; }
+.more[open] > summary::before { content: '▾ '; }
+.more > summary::-webkit-details-marker { display: none; }
+
 /* ── 詞彙 TAG ──
    一個詞一顆 TAG，自動換行排滿。順序就是優先順序（左上最優先）。
    沒生效的是虛線灰色；點 TAG 本身＝移到最前面，右邊的 ✕＝刪除（5 秒內可復原）。 */
@@ -191,6 +197,19 @@ input[type=text] {
     </div>
     <div class="meter-legend"><span class="mk" id="mklabel"></span></div>
     <div class="caption" id="caption">還沒有量測值。口述一次之後會顯示。</div>
+    <!-- 靈敏度放在音量條正下方：調它的時候要對照的就是上面那條 -->
+    <div class="opt">
+      <div class="name">這台 Mac 的靈敏度門檻<div class="sub" id="tholdsub">留白＝跟著 Spark 的全域值</div></div>
+      <input type="text" id="localthold" spellcheck="false" placeholder="全域值"
+             style="width:72px;text-align:right">
+    </div>
+    <div class="opt">
+      <div class="name" style="color:var(--steel);font-size: 16px">
+        MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，所以門檻可以每台各設一個。
+        這裡填的數字只影響這台 Mac，不會動到桌機口述和手機版。
+        參考上面的「上次量到」：門檻要低於你講話的音量、高於安靜時的音量。
+      </div>
+    </div>
   </div>
 
   <div class="label">RESULT</div>
@@ -240,6 +259,8 @@ input[type=text] {
     </div>
   </div>
 
+  <details class="more">
+    <summary class="label">MORE · 閘門數據 / 歷史 / 其他設定</summary>
   <div class="label">GATE</div>
   <div class="card">
     <dl class="kv" id="kv"></dl>
@@ -259,20 +280,9 @@ input[type=text] {
       <div class="name">辨識伺服器<div class="sub">改完立即生效</div></div>
     </div>
     <input type="text" id="server" spellcheck="false">
-    <div class="opt">
-      <div class="name">這台 Mac 的靈敏度門檻<div class="sub" id="tholdsub">留白＝跟著 Spark 的全域值</div></div>
-      <input type="text" id="localthold" spellcheck="false" placeholder="全域值"
-             style="width:72px;text-align:right">
-    </div>
-    <div class="opt">
-      <div class="name" style="color:var(--steel);font-size: 16px">
-        MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，所以門檻可以每台各設一個。
-        這裡填的數字只影響這台 Mac，不會動到桌機口述和手機版。
-        參考上面的「上次量到」：門檻要低於你講話的音量、高於安靜時的音量。
-      </div>
-    </div>
     <div class="btnrow"><button id="openweb">開啟網頁版</button><button id="update">檢查更新</button></div>
   </div>
+  </details>
 </div>
 
 <div class="foot">

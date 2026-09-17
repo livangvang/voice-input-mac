@@ -14,3 +14,9 @@ require("voice-input-run-fix")
 
 -- 超簡單語音輸入（⌃⌘V 開關面板，本地擴充）
 require("voice-input-panel-hotkey")
+
+-- 超簡單語音輸入（浮動圖示與提示泡泡，本地擴充）
+require("voice-input-float")
+
+-- 超簡單語音輸入（自動「學起來」，本地擴充）
+require("voice-input-autolearn")

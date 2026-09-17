@@ -88,12 +88,14 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 | `hammerspoon/assets/` | `~/.hammerspoon/voice-input/` | 面板 HTML、Anton 字體 | 上游 |
 | `hammerspoon/voice-input-chime.lua` | `~/.hammerspoon/voice-input-chime.lua` | **提示音** | 本地 |
 | `hammerspoon/voice-input-panel-hotkey.lua` | `~/.hammerspoon/voice-input-panel-hotkey.lua` | **⌃⌘V 開關面板** | 本地 |
+| `hammerspoon/voice-input-float.lua` | `~/.hammerspoon/voice-input-float.lua` | **浮動圖示與泡泡** | 本地 |
+| `hammerspoon/voice-input-autolearn.lua` | `~/.hammerspoon/voice-input-autolearn.lua` | **自動「學起來」** | 本地 |
 | `app/` | — | **Dock App**（見 [app/README.md](./app/README.md)） | 本地 |
 | `hammerspoon/init.lua.reference` | （只是副本） | `~/.hammerspoon/init.lua` 現況備查 | — |
 
 沒有搬進來的（屬於系統或執行期狀態）：
 
-- `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，五個 `require`／`dofile` 各載入一塊
+- `~/.hammerspoon/init.lua` — Hammerspoon 全域入口，七個 `require`／`dofile` 各載入一塊
 - `~/.hammerspoon/voice-meter-pos` — 舊版音量圓被拖到哪的位置記錄（新版沒有音量圓）
 - `~/.config/voice-input/config` — 本機設定檔（2026-08-14 起存在；目前有 `MAX_SECONDS`，門檻 `thold` 子指令與面板也寫這裡）
 
@@ -166,6 +168,28 @@ POST /api/vocab/move    {"word": "…", "direction": "top"|"up"|"down"}
 - 開始錄音**不收起來**，改成把焦點還給原本在打字的 App（`focusBackToApp`）——
   焦點留在面板的話，Cmd+V 會貼進面板自己。辨識中會再切一次。「重新貼上」也一樣。
 - 字比原本大 5px，面板 480×760。
+
+### 浮動圖示與自動「學起來」（2026-09-18，本地獨有）
+
+`voice-input-float.lua`：畫面上一顆可以拖的小圓（位置存 `voiceinput.floatPos`）。點一下開關面板；
+錄音時變橘色顯示秒數。存在的理由：選單列圖示會被 MacBook 的瀏海擋掉。
+全部用 `hs.canvas` 且 `clickActivating(false)`——點它不搶焦點，游標留在原本打字的地方。
+
+`voice-input-autolearn.lua`：貼出去的字被使用者改掉時，自己發現、在圖示旁跳泡泡問
+「錯的 → 對的，要學起來嗎？」，5 秒內點一下就存進個人校正表，不點就消失。
+
+做法：用 `hs.axuielement` 讀目前輸入框的全文，貼完後記下那句的前後文（prefix／suffix），
+之後每 0.7 秒讀一次；前後文都還在、夾在中間的那段變了、而且 2 秒沒再變 → 丟給面板 JS 的
+`learnDiff`（借隱藏的 webview 跑，不在 Lua 抄第二份）→ 跳泡泡。
+
+- **原文整段還在＝不是校正**（只是接著往下打字），不問。不擋的話會比出一條垃圾規則。
+- Electron（VS Code、Obsidian）要先設 `AXManualAccessibility` 才讀得到，App 切到前景時就先設。
+- 讀不到、前後文變了、換了輸入框 → 安靜地結束，不會亂跳。密碼欄位不讀。
+- 排查看 `$TMPDIR/voice-input/autolearn.log`（只記 App 名稱和規則，不記輸入框全文）。
+- 實測（TextEdit）：「紹廷」改成「紹庭」→ 5 秒後問「廷去 → 庭去」。VS Code 的輸入框讀得到；
+  **Obsidian 還沒實測**。
+
+面板也跟著整理：「這台 Mac 的靈敏度門檻」搬到音量條正下方；GATE／LOG／其他設定收進 MORE 折疊區。
 
 ---
 

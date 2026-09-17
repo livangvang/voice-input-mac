@@ -239,13 +239,15 @@ local function learnGrab()
     end)
 end
 
-local function learnSave(bad, good)
+-- reply(ok, msg)：存完怎麼回報。沒給就回給面板；浮動圖示的自動學習會給自己的。
+local function learnSave(bad, good, reply)
+    reply = reply or function(ok, msg) learnReply("learnResult", {ok = ok, msg = msg}) end
     local done = false
     -- hs.http 沒有逐請求逾時，不設看門狗的話斷線時會永遠停在「儲存中…」
     local watchdog = hs.timer.doAfter(10, function()
         if not done then
             done = true
-            learnReply("learnResult", {ok = false, msg = "❌ 伺服器沒有回應，這條沒存到"})
+            reply(false, "❌ 伺服器沒有回應，這條沒存到")
         end
     end)
     hs.http.asyncPost(core.server() .. "/api/corrections",
@@ -260,12 +262,12 @@ local function learnSave(bad, good)
                 local msg = data.action == "exists"
                     and ("「" .. data.bad .. " → " .. data.good .. "」本來就在你的校正表裡了")
                     or ("✅ 已存「" .. data.bad .. " → " .. data.good .. "」，下一句就生效")
-                learnReply("learnResult", {ok = true, msg = msg})
+                reply(true, msg)
             elseif code == 404 then
-                learnReply("learnResult", {ok = false, msg = "❌ 伺服器還不認得「學起來」（Spark 上的 voice-input-web 要重啟）"})
+                reply(false, "❌ 伺服器還不認得「學起來」（Spark 上的 voice-input-web 要重啟）")
             else
                 local err = (ok and type(data) == "table" and data.error) or ("HTTP " .. tostring(code))
-                learnReply("learnResult", {ok = false, msg = "❌ 沒存到：" .. err})
+                reply(false, "❌ 沒存到：" .. err)
             end
         end)
 end
@@ -420,6 +422,28 @@ end
 function M.toggle()
     if panel and panel:isVisible() then M.hide() else M.show() end
 end
+
+-- ── 給本地擴充用的入口（voice-input-autolearn.lua）────
+-- 比對規則只有面板 JS 裡那一份（learnDiff）。這裡借面板的 webview 來跑，
+-- 不在 Lua 再抄一份——兩份遲早會分岔。面板不必顯示，沒開過也會先建起來（隱藏的）。
+-- cb 收到 {bad, good} 或 {error}。
+function M.learnDiff(original, selected, cb, retried)
+    local fresh = panel == nil
+    local p = ensurePanel()
+    local ok, args = pcall(hs.json.encode, {original, selected})
+    if not p or not ok then return cb({error = "面板不可用"}) end
+    p:evaluateJavaScript("JSON.stringify(learnDiff.apply(null, " .. args .. "))", function(result)
+        local decoded, data = pcall(hs.json.decode, result or "")
+        if decoded and type(data) == "table" then return cb(data) end
+        -- 剛建起來的 webview 還沒載完 HTML，learnDiff 還不存在：等一下再試一次就好
+        if fresh and not retried then
+            return hs.timer.doAfter(1, function() M.learnDiff(original, selected, cb, true) end)
+        end
+        cb({error = "比對失敗"})
+    end)
+end
+
+M.saveCorrection = learnSave    -- (bad, good, function(ok, msg) end)
 
 -- ── 渲染 ──────────────────────────────────────────────
 function M.render()
