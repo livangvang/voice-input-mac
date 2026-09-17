@@ -139,8 +139,24 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 curl -s https://spark-cb4e.taild73ae6.ts.net/api/vocab | python3 -m json.tool
 ```
 
-刪詞還沒有 UI，直接編 `~/.config/voice-input/vocabulary.txt` 再
-`systemctl --user restart voice-input-server`。
+### 刪詞與排序（2026-09-18）
+
+面板的詞彙區下方列出**整份**詞彙表（上面的選單切「個人／共用」），照優先順序排。
+橘線以上是有進提示詞的，橘線以下存著但沒生效。每個詞有 ⇡（移到最前）、↑、↓、✕。
+✕ 要按兩下才會刪（3 秒內），刪掉沒有復原，只能重加。
+
+方向是「詞隨便存、自己排優先」，不是「加一個擠掉一個」：224 token 是 whisper 的
+硬上限改不了，但哪些詞吃得到那塊預算，由使用者自己決定。
+
+API（Spark 端 `bin/voice-input-web`），`scope` 必填——刪錯份改不回來，不猜：
+
+```bash
+POST /api/vocab/remove  {"word": "…", "scope": "personal"|"common"}
+POST /api/vocab/move    {"word": "…", "scope": "…", "direction": "top"|"up"|"down"}
+```
+
+排序只在「詞」的那幾行之間搬，檔案裡的 `#` 註解留在原位。共用那份改完一樣會重啟
+whisper-server，個人那份下一句就生效。
 
 ---
 

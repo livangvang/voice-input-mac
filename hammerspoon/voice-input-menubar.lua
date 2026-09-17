@@ -120,6 +120,13 @@ local function vocabRefresh()
                 lines[#lines + 1] = string.format("你的個人詞 %d 個，其中 %d 個進得了你的提示詞", mine, used)
             end
             vocab.summary = table.concat(lines, "\n")
+            -- 面板的詞彙清單：每份照檔案順序＝ used 接 dropped（放不下的從尾巴砍）
+            local function split(part)
+                part = type(part) == "table" and part or {}
+                return {used = type(part.used) == "table" and part.used or {},
+                        dropped = type(part.dropped) == "table" and part.dropped or {}}
+            end
+            vocab.lists = {personal = split(data.personal), common = split(data.common)}
         else
             vocab.summary = "讀不到詞彙表（HTTP " .. tostring(code) .. "）"
         end
@@ -167,6 +174,38 @@ local function vocabAdd(word, scope)
                             or ("HTTP " .. tostring(code))
                 vocab.msg = "❌ 加入失敗：" .. err
                 M.render()
+            end
+        end)
+end
+
+-- 刪詞／排序。op 是 "remove" 或 "move"（direction: top/up/down）。
+-- 共用那份改完伺服器要重啟辨識服務幾秒，所以要先講。
+local VOCAB_MOVE_TEXT = {top = "移到最前面", up = "往前移", down = "往後移"}
+local function vocabEdit(op, word, scope, direction)
+    if scope ~= "common" and scope ~= "personal" then return end
+    local waiting = scope == "common" and "（共用詞彙表，辨識服務要重啟幾秒）" or ""
+    vocab.msg = (op == "remove" and "刪除中…" or "移動中…") .. waiting
+    M.render()
+    hs.http.asyncPost(core.server() .. "/api/vocab/" .. op,
+                      hs.json.encode({word = word, scope = scope, direction = direction}),
+                      {["Content-Type"] = "application/json", ["X-Voice-User"] = core.user()},
+        function(code, body)
+            local ok, data = pcall(hs.json.decode, body or "")
+            if code == 200 and ok and type(data) == "table" then
+                if data.result == "removed" then
+                    vocab.msg = "🗑 已刪除「" .. word .. "」"
+                elseif data.result == "edge" then
+                    vocab.msg = "「" .. word .. "」已經到底了"
+                else
+                    vocab.msg = "已把「" .. word .. "」" .. (VOCAB_MOVE_TEXT[direction] or "移動")
+                                .. (data.effective and "，✅ 有生效" or "，⚠️ 還沒生效，再往前移")
+                end
+                vocabRefresh()
+            else
+                local err = (ok and type(data) == "table" and data.error)
+                            or ("HTTP " .. tostring(code) .. "（Spark 版本太舊？）")
+                vocab.msg = "❌ " .. err
+                vocabRefresh()
             end
         end)
 end
@@ -276,6 +315,10 @@ local function handleMessage(body)
     elseif a == "addVocab" then
         local w = tostring(body.word or ""):match("^%s*(.-)%s*$")
         if w ~= "" then vocabAdd(w, body.scope) end
+    elseif a == "removeVocab" or a == "moveVocab" then
+        if type(body.word) == "string" and body.word ~= "" then
+            vocabEdit(a == "removeVocab" and "remove" or "move", body.word, body.scope, body.direction)
+        end
     elseif a == "copy" then
         if body.text and body.text ~= "" then
             hs.pasteboard.setContents(body.text)
