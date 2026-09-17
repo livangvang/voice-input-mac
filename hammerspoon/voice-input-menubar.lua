@@ -16,7 +16,7 @@ local core = require("voice-input-core")
 local M = {}
 local bar, panel, tickTimer
 local state = {phase = "idle", elapsed = 0}
-local frontWindow = nil          -- 面板顯示前的作用中視窗，「重新貼上」要用
+local frontWindow = nil          -- 面板顯示前的作用中視窗，焦點要還回去時的備案
 
 -- 面板大小。字比原本大 5px（2026-09-18），寬度跟著放大，不然每行塞不下。
 local PANEL_W, PANEL_H = 480, 760
@@ -178,70 +178,18 @@ local function vocabEdit(op, word, direction)
 end
 
 -- ── 學起來 ────────────────────────────────────────────
--- 使用者用鍵盤把貼出去的字改好、選起來，按面板的「學起來」：
---   1. 切回剛剛打字的 App，送 Cmd+C，從剪貼簿讀出選取的文字（讀完還原剪貼簿）
---   2. 連同 last.json 的原文丟給面板——比對、確認、5 秒倒數都在面板 JS 裡做
---   3. 使用者按「儲存」→ POST /api/corrections 寫進他的個人校正表
---
--- Cmd+C 用 hs.eventtap.keyStroke，不用 osascript 的 keystroke：後者走字元合成路徑，
--- 中文輸入法開著時會被輸入法吃掉（見 voice-input-mac.sh 的 send_cmd_v）；
--- keyStroke 送的是實體鍵位，跟「重新貼上」的 Cmd+V 同一條路。
-local LEARN_COPY_WAIT = 0.35     -- 送出 Cmd+C 後等 App 把選取寫進剪貼簿的秒數
+-- 貼出去的字被使用者改掉時，voice-input-autolearn.lua 自己發現差異、跳泡泡問要不要存。
+-- 這裡只留它要用的兩個入口：M.learnDiff（借面板 JS 比對）和 M.saveCorrection。
 
 -- 最後一個作用中、不是 Hammerspoon 的 App。面板開著時使用者可能又回去改字，
--- M.show() 當時記下的 frontWindow 不一定還是他選字的那個視窗。
+-- M.show() 當時記下的 frontWindow 不一定還是他打字的那個視窗。
 local lastApp = nil
 local function isOtherApp(app)
     return app and app:bundleID() ~= "org.hammerspoon.Hammerspoon"
 end
 
-local function learnReply(fn, data)
-    if not panel then return end
-    local ok, js = pcall(hs.json.encode, data)
-    if ok then panel:evaluateJavaScript("window.VI && VI." .. fn .. "(" .. js .. ")") end
-end
-
-local function learnGrab()
-    local original = core.lastText()
-    if not original then
-        return learnReply("learnSelection", {error = "還沒有辨識過，沒有原文可以比"})
-    end
-    if not lastApp and not frontWindow then
-        return learnReply("learnSelection", {error = "找不到剛剛打字的視窗：先回去把改好的那句選起來"})
-    end
-
-    local before = hs.pasteboard.changeCount()
-    local old = hs.pasteboard.getContents()
-    -- lastApp 可能已經被關掉了（物件還在、App 不在），activate 失敗就退回 frontWindow
-    local ok, activated = pcall(function() return lastApp and lastApp:activate() end)
-    if not (ok and activated) and frontWindow then pcall(function() frontWindow:focus() end) end
-
-    hs.timer.doAfter(0.15, function()
-        hs.eventtap.keyStroke({"cmd"}, "c")
-        hs.timer.doAfter(LEARN_COPY_WAIT, function()
-            -- changeCount 沒變 = Cmd+C 沒複製到東西（沒選字）。不能只看內容：
-            -- 剪貼簿裡本來就可能躺著一段看起來很像的文字。
-            local sel = nil
-            if hs.pasteboard.changeCount() ~= before then
-                sel = hs.pasteboard.getContents()
-                -- 還原：只還原純文字（跟 .sh 的 emit 一樣），而且內容還是剛複製的那份才還原
-                if old ~= nil and hs.pasteboard.getContents() == sel then
-                    hs.pasteboard.setContents(old)
-                end
-            end
-            -- 焦點拿回面板：非作用中的視窗第一下點擊可能只會啟用視窗，5 秒內會按不到「儲存」
-            pcall(function() panel:hswindow():focus() end)
-            if not sel or not sel:match("%S") then
-                return learnReply("learnSelection", {error = "沒有讀到選取的文字：先把改好的那句選起來再按"})
-            end
-            learnReply("learnSelection", {original = original, selected = sel})
-        end)
-    end)
-end
-
--- reply(ok, msg)：存完怎麼回報。沒給就回給面板；浮動圖示的自動學習會給自己的。
+-- reply(ok, msg)：存完怎麼回報（自動學習用泡泡回報）。
 local function learnSave(bad, good, reply)
-    reply = reply or function(ok, msg) learnReply("learnResult", {ok = ok, msg = msg}) end
     local done = false
     -- hs.http 沒有逐請求逾時，不設看門狗的話斷線時會永遠停在「儲存中…」
     local watchdog = hs.timer.doAfter(10, function()
@@ -288,13 +236,7 @@ end
 local function handleMessage(body)
     if type(body) ~= "table" then return end
     local a = body.action
-    if a == "learn" then
-        learnGrab()
-    elseif a == "saveCorrection" then
-        if type(body.bad) == "string" and type(body.good) == "string" then
-            learnSave(body.bad, body.good)
-        end
-    elseif a == "addVocab" then
+    if a == "addVocab" then
         local w = tostring(body.word or ""):match("^%s*(.-)%s*$")
         if w ~= "" then vocabAdd(w) end
     elseif a == "removeVocab" then
@@ -306,20 +248,6 @@ local function handleMessage(body)
             hs.pasteboard.setContents(body.text)
             hs.alert.show("已複製")
         end
-    elseif a == "repaste" then
-        -- 必須切回**面板顯示之前**的那個視窗。等到要貼上才問「現在哪個視窗是
-        -- 作用中的」，答案會是面板自己，文字就貼到面板身上了。
-        -- （桌面版的預覽視窗踩過一模一樣的坑，見 README 的「先看過再貼上」。）
-        -- 面板不收起來（它是常駐的浮動視窗），只把焦點切回去。
-        if body.text and body.text ~= "" then
-            hs.pasteboard.setContents(body.text)
-            focusBackToApp()
-            hs.timer.doAfter(0.15, function()
-                hs.eventtap.keyStroke({"cmd"}, "v")
-            end)
-        end
-    elseif a == "toggleRecord" then
-        core.run("toggle")
     elseif a == "setConfig" then
         if body.key then core.setConfig(body.key, body.value or "") end
         M.render()
@@ -476,7 +404,6 @@ function M.render()
             config = core.config(),
             user = core.user(),
             vocab = vocab,
-            learnReady = core.lastText() ~= nil,     -- 沒有原文就不能「學起來」
         }
         local ok, js = pcall(hs.json.encode, payload)
         if ok then panel:evaluateJavaScript("window.VI && VI.push(" .. js .. ")") end

@@ -94,11 +94,6 @@ body {
 .caption { font-size: 16px; color: var(--dim); }
 .caption.over { color: var(--orange); }
 
-/* ── 結果 ── */
-.result { font-size: 19px; color: var(--fg); -webkit-user-select: text; word-break: break-word; }
-.result.empty { color: var(--steel); }
-.meta { font-size: 16px; color: var(--steel); margin-top: 6px; }
-.btnrow { display: flex; gap: 6px; margin-top: 10px; }
 button {
   font-family: var(--body); font-size: 17px; color: var(--fg);
   background: transparent; border: 1px solid var(--line); border-radius: 0;
@@ -109,12 +104,8 @@ button:disabled { color: var(--steel); cursor: default; }
 button.primary { border-color: var(--orange); }
 [hidden] { display: none !important; }
 
-/* ── 學起來 ── */
-.learn { margin-top: 10px; padding: 10px; border: 1px solid var(--orange); }
-.learn .ask { font-size: 16px; color: var(--dim); }
-.learn .rule { font-size: 20px; word-break: break-word; margin: 2px 0 8px; }
-.learn .btnrow { align-items: center; margin-top: 0; }
-.learn .count { font-size: 16px; color: var(--steel); }
+/* ── 按鈕 ── */
+.btnrow { display: flex; gap: 6px; margin-top: 10px; }
 
 /* ── 閘門統計 ── */
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 16px; }
@@ -197,41 +188,12 @@ input[type=text] {
     </div>
     <div class="meter-legend"><span class="mk" id="mklabel"></span></div>
     <div class="caption" id="caption">還沒有量測值。口述一次之後會顯示。</div>
-    <!-- 靈敏度放在音量條正下方：調它的時候要對照的就是上面那條 -->
+    <!-- 靈敏度（這台 Mac 的門檻）：放在音量條正下方，調它時要對照的就是上面那條。
+         留白＝跟著 Spark 的全域值；placeholder 顯示目前實際用的數字。 -->
     <div class="opt">
-      <div class="name">這台 Mac 的靈敏度門檻<div class="sub" id="tholdsub">留白＝跟著 Spark 的全域值</div></div>
-      <input type="text" id="localthold" spellcheck="false" placeholder="全域值"
-             style="width:72px;text-align:right">
+      <div class="name">靈敏度</div>
+      <input type="text" id="localthold" spellcheck="false" style="width:96px;text-align:right">
     </div>
-    <div class="opt">
-      <div class="name" style="color:var(--steel);font-size: 16px">
-        MacBook 內建麥克風跟 Spark 上的桌面麥克風差好幾倍，所以門檻可以每台各設一個。
-        這裡填的數字只影響這台 Mac，不會動到桌機口述和手機版。
-        參考上面的「上次量到」：門檻要低於你講話的音量、高於安靜時的音量。
-      </div>
-    </div>
-  </div>
-
-  <div class="label">RESULT</div>
-  <div class="card">
-    <div class="result empty" id="result">還沒有辨識結果</div>
-    <div class="meta" id="meta"></div>
-    <div class="btnrow">
-      <button id="copy" disabled>複製</button>
-      <button id="repaste" disabled>重新貼上</button>
-      <button id="learn" disabled title="用鍵盤改好錯字後，把改好的整句選起來再按">學起來</button>
-      <button id="rec" class="primary">開始錄音</button>
-    </div>
-    <!-- 學起來的確認：沒按「儲存」的話 LEARN_SECONDS 秒後自動關掉、不存 -->
-    <div class="learn" id="learnbox" hidden>
-      <div class="ask">要存這條校正嗎？</div>
-      <div class="rule" id="learnrule"></div>
-      <div class="btnrow">
-        <button id="learnsave" class="primary">儲存</button>
-        <span class="count" id="learncount"></span>
-      </div>
-    </div>
-    <div class="raw" id="learnmsg"></div>
   </div>
 
   <div class="label">VOCAB</div>
@@ -307,7 +269,6 @@ const axisPos = v => {
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-let lastText = '';
 
 // ── 學起來：比對「辨識原文」和「使用者改好後選起來的文字」──
 // 最長共同前綴 + 最長共同後綴，中間那段就是「錯的 → 對的」，只提一條。
@@ -422,37 +383,7 @@ $('undobtn').onclick = () => {
   renderVocabList(true);
 };
 
-let learnRule = null, learnTimer = null, learnTick = null;
-// 關掉確認框。msg 有給就順便換提示文字。
-const learnClose = msg => {
-  clearTimeout(learnTimer); clearInterval(learnTick);
-  learnTimer = learnTick = null; learnRule = null;
-  $('learnbox').hidden = true;
-  if (msg != null) $('learnmsg').textContent = msg;
-};
-
 window.VI = {
-  // Lua 讀完選取的文字後呼叫：{original, selected} 或 {error}
-  learnSelection(d) {
-    const r = d.error ? d : learnDiff(d.original, d.selected);
-    if (r.error) return learnClose(r.error);
-    learnClose('');
-    learnRule = r;
-    $('learnrule').textContent = r.bad + ' → ' + r.good;
-    $('learnbox').hidden = false;
-    // 倒數：setTimeout 負責「時間到就關、不存」，setInterval 只負責每秒改畫面上的數字。
-    // 兩個分開：就算 interval 被 WebKit 節流慢了，關閉的時間點還是準的。
-    let left = LEARN_SECONDS;
-    const paint = () => { $('learncount').textContent = left + ' 秒後自動關閉，不存'; };
-    paint();
-    learnTick = setInterval(() => { if (left > 1) { left--; paint(); } }, 1000);
-    learnTimer = setTimeout(() => learnClose('沒按儲存，這條沒存'), LEARN_SECONDS * 1000);
-  },
-  // Lua 存完之後呼叫：{ok, msg}
-  learnResult(d) {
-    $('learnmsg').textContent = d.msg || '';
-  },
-
   push(s) {
     // ── 狀態 ──
     const ph = s.phase || 'idle';
@@ -461,20 +392,17 @@ window.VI = {
       $('unit').textContent = 'S';
       $('state').textContent = '收音中';
       $('state').className = 'state live';
-      $('rec').textContent = '停止並辨識';
     } else if (ph === 'transcribing') {
       $('big').textContent = '···';
       $('unit').textContent = '';
       $('state').textContent = '辨識中';
       $('state').className = 'state';
-      $('rec').textContent = '辨識中…';
     } else {
       const sec = s.last && s.last.seconds;
       $('big').textContent = sec ? sec.toFixed(2) : '—';
       $('unit').textContent = sec ? 'S' : '';
       $('state').textContent = '待命';
       $('state').className = 'state';
-      $('rec').textContent = '開始錄音';
     }
 
     // ── 音量條：門檻刻度 + 上次量到的 p95 ──
@@ -496,26 +424,6 @@ window.VI = {
       $('caption').textContent = '上次量到 ' + g.p95 + (over ? ' · 高於門檻' : ' · 低於門檻，會被擋下');
       $('caption').className = 'caption' + (over ? ' over' : '');
     }
-
-    // ── 結果 ──
-    const r = s.last;
-    if (r && r.kind === 'ok') {
-      lastText = r.text;
-      $('result').textContent = r.text;
-      $('result').className = 'result';
-      $('meta').textContent = r.seconds ? ('辨識耗時 ' + r.seconds.toFixed(2) + ' 秒') : '';
-      $('copy').disabled = false; $('repaste').disabled = false;
-    } else if (r) {
-      lastText = '';
-      $('result').textContent = r.reason || '沒有辨識到內容';
-      $('result').className = 'result empty';
-      $('meta').textContent = '';
-      $('copy').disabled = true; $('repaste').disabled = true;
-    }
-
-    // 學起來看的是 last.json 的原文，不是上面的 r：本地錯誤（last.note）比較新時
-    // 結果區會顯示錯誤，但上次貼出去的字還在、還是可以學
-    $('learn').disabled = !s.learnReady;
 
     // ── 閘門統計 ──
     // 解析失敗時顯示原始字串。那行字是 speech-gate.py 印給人看的 stderr，
@@ -569,27 +477,11 @@ window.VI = {
       $('trailing').checked = s.config.TRAILING_SPACE === '1';
       if (document.activeElement !== $('localthold'))
         $('localthold').value = s.config.SPEECH_ABS_THOLD || '';
-      $('tholdsub').textContent = s.config.SPEECH_ABS_THOLD
-        ? ('全域值是 ' + (s.threshold || '?') + '，這台用自己的')
-        : ('留白＝跟著 Spark 的全域值 ' + (s.threshold || '?'));
+      $('localthold').placeholder = s.threshold ? String(s.threshold) : '';
     }
   }
 };
 
-$('copy').onclick    = () => send({action: 'copy', text: lastText});
-$('repaste').onclick = () => send({action: 'repaste', text: lastText});
-$('rec').onclick     = () => send({action: 'toggleRecord'});
-// 學起來：Lua 切回 App 送 Cmd+C 讀選取，讀完呼叫 VI.learnSelection
-$('learn').onclick = () => {
-  learnClose('讀取選起來的文字…');
-  send({action: 'learn'});
-};
-$('learnsave').onclick = () => {
-  if (!learnRule) return;
-  const r = learnRule;
-  learnClose('儲存中…');        // 先關倒數，不然存到一半時間到會蓋掉訊息
-  send({action: 'saveCorrection', bad: r.bad, good: r.good});
-};
 $('openweb').onclick = () => send({action: 'openWeb'});
 $('update').onclick  = () => send({action: 'checkUpdate'});
 // 加詞：按鈕或直接按 Enter 都可以。送出後清空輸入框，免得連按兩次加成兩筆。
@@ -610,15 +502,10 @@ $('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e
 $('localthold').onchange = e => {
   const raw = e.target.value.trim();
   if (raw === '') return send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: ''});
-  if (!/^\d+$/.test(raw)) {
+  const v = /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
+  if (!(v >= AXIS_MIN && v <= AXIS_MAX)) {
     e.target.value = '';
-    $('tholdsub').textContent = '要填 ' + AXIS_MIN + ' 到 ' + AXIS_MAX + ' 之間的整數';
-    return;
-  }
-  const v = parseInt(raw, 10);
-  if (v < AXIS_MIN || v > AXIS_MAX) {
-    e.target.value = '';
-    $('tholdsub').textContent = '要填 ' + AXIS_MIN + ' 到 ' + AXIS_MAX + ' 之間的整數';
+    $('localthold').placeholder = AXIS_MIN + '–' + AXIS_MAX;
     return;
   }
   send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: String(v)});
