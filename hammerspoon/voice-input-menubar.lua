@@ -178,7 +178,7 @@ local function vocabEdit(op, word, direction)
 end
 
 -- ── 學起來 ────────────────────────────────────────────
--- 貼出去的字被使用者改掉時，voice-input-autolearn.lua 自己發現差異、跳泡泡問要不要存。
+-- 貼出去的字被使用者改掉時，voice-input-autolearn.lua 自己發現差異、浮動島問要不要存。
 -- 這裡只留它要用的兩個入口：M.learnDiff（借面板 JS 比對）和 M.saveCorrection。
 
 -- 最後一個作用中、不是 Hammerspoon 的 App。面板開著時使用者可能又回去改字，
@@ -188,7 +188,7 @@ local function isOtherApp(app)
     return app and app:bundleID() ~= "org.hammerspoon.Hammerspoon"
 end
 
--- reply(ok, msg)：存完怎麼回報（自動學習用泡泡回報）。
+-- reply(ok, msg, vocabAdded)：存完怎麼回報（自動學習用浮動島回報）。
 local function learnSave(bad, good, reply)
     local done = false
     -- hs.http 沒有逐請求逾時，不設看門狗的話斷線時會永遠停在「儲存中…」
@@ -210,7 +210,12 @@ local function learnSave(bad, good, reply)
                 local msg = data.action == "exists"
                     and ("「" .. data.bad .. " → " .. data.good .. "」本來就在你的校正表裡了")
                     or ("✅ 已存「" .. data.bad .. " → " .. data.good .. "」，下一句就生效")
-                reply(true, msg)
+                -- 伺服器會把「對的寫法」順便加進詞彙表（片語、含標點的不加）。
+                -- 第三個參數告訴呼叫端詞彙表有沒有多一個詞；面板開著的話 TAG 也要跟著更新。
+                local v = type(data.vocab) == "table" and data.vocab or nil
+                local vocabAdded = v ~= nil and v.result == "added"
+                if vocabAdded then vocabRefresh() end
+                reply(true, msg, vocabAdded)
             elseif code == 404 then
                 reply(false, "❌ 伺服器還不認得「學起來」（Spark 上的 voice-input-web 要重啟）")
             else
@@ -371,7 +376,7 @@ function M.learnDiff(original, selected, cb, retried)
     end)
 end
 
-M.saveCorrection = learnSave    -- (bad, good, function(ok, msg) end)
+M.saveCorrection = learnSave    -- (bad, good, function(ok, msg, vocabAdded) end)
 
 -- ── 渲染 ──────────────────────────────────────────────
 function M.render()

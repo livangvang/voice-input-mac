@@ -93,9 +93,13 @@ local function offer(original, edited)
             good = r.good,
             seconds = ASK_SECONDS,
             onClick = function()
-                menubar.saveCorrection(r.bad, r.good, function(ok, msg)
-                    log((ok and "已存：" or "沒存到：") .. tostring(msg))
-                    float.notify(ok and "學起來了 · 下一句生效" or "沒存到，再試一次", ok)
+                menubar.saveCorrection(r.bad, r.good, function(ok, msg, vocabAdded)
+                    log((ok and "已存：" or "沒存到：") .. tostring(msg)
+                        .. (vocabAdded and "（也加進詞彙表）" or ""))
+                    local text = not ok and "沒存到，再試一次"
+                        or vocabAdded and "學起來了 · 也加進詞彙"
+                        or "學起來了 · 下一句生效"
+                    float.notify(text, ok)
                 end)
             end,
         })
