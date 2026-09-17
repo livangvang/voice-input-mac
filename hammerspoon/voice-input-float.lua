@@ -105,6 +105,8 @@ local function ring(cx, color, width, fromDeg, toDeg)
             arcRadii = false, strokeCapStyle = "round"}
 end
 
+-- 三根音量條：中間高、左右低（對稱）。刻意不是階梯狀——
+-- 由低到高那種一看就像手機收訊格數，不像聲音。
 local function bars(cx, heights, colors)
     local out, xs = {}, {-9, -2, 5}
     for i = 1, 3 do
@@ -131,7 +133,7 @@ local function drawIdle()
     stopAnim()
     local cx, _, w = placeIsland(0)
     canvas:replaceElements(background(w), ring(cx, ORANGE_DIM, 1.5, 0, 360))
-    for _, b in ipairs(bars(cx, {8, 14, 20}, {WHITE, WHITE, ORANGE})) do canvas:appendElements(b) end
+    for _, b in ipairs(bars(cx, {11, 20, 11}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
 end
 
 local function drawRecording()
@@ -150,7 +152,7 @@ local function drawRecording()
         ring(cx, ORANGE, 2, 0, 75)
     )
     local barIdx = #canvas + 1
-    for _, b in ipairs(bars(cx, {20, 20, 20}, {WHITE, WHITE, ORANGE})) do canvas:appendElements(b) end
+    for _, b in ipairs(bars(cx, {11, 20, 11}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
     local started = hs.timer.secondsSinceEpoch()
     animTimer = hs.timer.doEvery(FPS, function()
         if not canvas then return end
@@ -159,8 +161,10 @@ local function drawRecording()
         canvas[4].text = styled(string.format("%.1f", sec), DISPLAY, 20, WHITE, {paragraphStyle = {alignment = "right"}})
         local a = (t / 1.4 * 360) % 360
         canvas[5].startAngle, canvas[5].endAngle = a, a + 75
+        -- 中間那根跳得比兩邊高，形狀維持「中間高、左右低」
         for i = 0, 2 do
-            local h = 8 + 12 * (0.5 + 0.5 * math.sin((t / 0.9) * 2 * math.pi - i * 1.05))
+            local scale = (i == 1) and 1 or 0.6
+            local h = (6 + 14 * (0.5 + 0.5 * math.sin((t / 0.9) * 2 * math.pi - i * 1.05))) * scale
             canvas[barIdx + i].frame = {x = cx + R + ({-9, -2, 5})[i + 1], y = R + 10 - h, w = 4, h = h}
         end
     end)
