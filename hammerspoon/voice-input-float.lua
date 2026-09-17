@@ -105,8 +105,9 @@ local function ring(cx, color, width, fromDeg, toDeg)
             arcRadii = false, strokeCapStyle = "round"}
 end
 
--- 三根音量條：中間高、左右低（對稱）。刻意不是階梯狀——
+-- 三根音量條：中間最高、左右低（左邊比右邊高一點，不完全對稱）。刻意不是階梯狀——
 -- 由低到高那種一看就像手機收訊格數，不像聲音。
+-- 註：錄音中那組跳動是對稱的（見 drawRecording），所以一開始錄音時左右高低會對調一下。
 local function bars(cx, heights, colors)
     local out, xs = {}, {-9, -2, 5}
     for i = 1, 3 do
@@ -132,8 +133,8 @@ end
 local function drawIdle()
     stopAnim()
     local cx, _, w = placeIsland(0)
-    canvas:replaceElements(background(w), ring(cx, ORANGE_DIM, 1.5, 0, 360))
-    for _, b in ipairs(bars(cx, {11, 20, 11}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
+    canvas:replaceElements(background(w), ring(cx, ORANGE_DIM, 3, 0, 360))
+    for _, b in ipairs(bars(cx, {14, 20, 10}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
 end
 
 local function drawRecording()
@@ -152,7 +153,7 @@ local function drawRecording()
         ring(cx, ORANGE, 2, 0, 75)
     )
     local barIdx = #canvas + 1
-    for _, b in ipairs(bars(cx, {11, 20, 11}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
+    for _, b in ipairs(bars(cx, {14, 20, 10}, {WHITE, ORANGE, WHITE})) do canvas:appendElements(b) end
     local started = hs.timer.secondsSinceEpoch()
     animTimer = hs.timer.doEvery(FPS, function()
         if not canvas then return end
