@@ -311,8 +311,11 @@ local function handleMessage(body)
     elseif a == "checkUpdate" then
         hs.alert.show("更新中…")
         hs.task.new("/bin/bash", function(rc)
-            hs.alert.show(rc == 0 and "已更新，重新載入設定" or "更新失敗")
-            if rc == 0 then hs.timer.doAfter(1, hs.reload) end
+            if rc == 0 then
+                hs.alert.show("已更新。請 Quit Hammerspoon 再重開，新功能才會生效")
+            else
+                hs.alert.show("更新失敗")
+            end
         end, {"-c", "curl -fsSL " .. core.server() .. "/mac/install.sh | bash"}):start()
     end
 end
