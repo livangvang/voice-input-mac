@@ -88,7 +88,7 @@ Hammerspoon 和 shell 也照常運作（跟 Spark 上 `~/Program/` 的做法一�
 | `hammerspoon/assets/` | `~/.hammerspoon/voice-input/` | 面板 HTML、Anton 字體 | 上游 |
 | `hammerspoon/voice-input-chime.lua` | `~/.hammerspoon/voice-input-chime.lua` | **提示音** | 本地 |
 | `hammerspoon/voice-input-panel-hotkey.lua` | `~/.hammerspoon/voice-input-panel-hotkey.lua` | **⌃⌘V 開關面板** | 本地 |
-| `hammerspoon/voice-input-float.lua` | `~/.hammerspoon/voice-input-float.lua` | **浮動圖示與泡泡** | 本地 |
+| `hammerspoon/voice-input-float.lua` | `~/.hammerspoon/voice-input-float.lua` | **浮動島** | 本地 |
 | `hammerspoon/voice-input-autolearn.lua` | `~/.hammerspoon/voice-input-autolearn.lua` | **自動「學起來」** | 本地 |
 | `app/` | — | **Dock App**（見 [app/README.md](./app/README.md)） | 本地 |
 | `hammerspoon/init.lua.reference` | （只是副本） | `~/.hammerspoon/init.lua` 現況備查 | — |
@@ -171,11 +171,26 @@ POST /api/vocab/move    {"word": "…", "direction": "top"|"up"|"down"}
 
 ### 浮動圖示與自動「學起來」（2026-09-18，本地獨有）
 
-`voice-input-float.lua`：畫面上一顆可以拖的小圓（位置存 `voiceinput.floatPos`）。點一下開關面板；
-錄音時變橘色顯示秒數。存在的理由：選單列圖示會被 MacBook 的瀏海擋掉。
-全部用 `hs.canvas` 且 `clickActivating(false)`——點它不搶焦點，游標留在原本打字的地方。
+`voice-input-float.lua`：畫面上一顆可以拖的黑色小圓（位置存 `voiceinput.floatPos`，存的是圓的左上角）。
+有話要說時訊息從圓**往左長出去**，連成一條黑色膠囊，像 iPhone 的動態島；圓太靠螢幕左邊時改往右長。
+設計稿：https://claude.ai/artifact/6njg8SMzBxSdhES8P9Yxey
 
-`voice-input-autolearn.lua`：貼出去的字被使用者改掉時，自己發現、在圖示旁跳泡泡問
+| 狀態 | 島上 | 圓上 | 點一下 |
+|---|---|---|---|
+| 待命 | （只有圓） | 淡橘細環、三根音量條 | 開關面板 |
+| 錄音中 | ● 收音中 12.4 | 一段橘弧在轉、音量條跳 | 開關面板 |
+| 要學起來嗎 | ~~錯的~~ → 對的／點一下學起來 | 橘環 5 秒倒數、加號 | **存這條規則** |
+| 存好了 | 學起來了 · 下一句生效 | 整圈橘環、打勾 | 開關面板 |
+
+橘色只當細線點綴，不整顆填滿。存在的理由：選單列圖示會被 MacBook 的瀏海擋掉。
+全部用 `hs.canvas` 且 `clickActivating(false)`——點它不搶焦點，游標留在原本打字的地方。
+canvas 的 frame 每次換狀態都重設成島實際的大小，透明處不會擋住底下的點擊。
+
+⚠️ **放開滑鼠要兩邊都聽**（canvas 的 mouseUp 和拖曳用 eventtap 的 leftMouseUp，先到的處理）。
+只聽 eventtap 的話，點得很快時 mouseUp 會在 tap 開好前就過去，tap 永遠停不掉，
+之後整顆島都點不動。實測踩到過：快速點擊時 `onClick` 沒觸發。
+
+`voice-input-autolearn.lua`：貼出去的字被使用者改掉時，自己發現、讓浮動島長出來問
 「錯的 → 對的，要學起來嗎？」，5 秒內點一下就存進個人校正表，不點就消失。
 
 做法：用 `hs.axuielement` 讀目前輸入框的全文，貼完後記下那句的前後文（prefix／suffix），

@@ -1,14 +1,14 @@
 -- 超簡單語音輸入 — 自動「學起來」（本地擴充）
 --
 -- 口述的字貼出去之後，使用者用鍵盤把錯字改掉——這裡自己發現他改了什麼，
--- 在浮動圖示旁邊跳泡泡問「錯的 → 對的，要學起來嗎？」。5 秒內點一下就存，不點就消失。
+-- 讓浮動島往左長出「錯的 → 對的，要學起來嗎？」。5 秒內點一下就存，不點就縮回去。
 --
 -- ## 怎麼知道他改了什麼
 --
 -- 用 macOS 的輔助使用 API（hs.axuielement）讀**目前輸入框的全文**：
 --   1. 貼上後讀一次，在全文裡找到剛貼的那句 → 記下它前面和後面的字（prefix / suffix）
 --   2. 之後每 POLL 秒再讀一次。prefix 和 suffix 都還在的話，夾在中間的就是「那句現在的樣子」
---   3. 中間那段跟原文不一樣、而且 IDLE 秒沒再變（＝改完了）→ 丟給 learnDiff 比出規則 → 跳泡泡
+--   3. 中間那段跟原文不一樣、而且 IDLE 秒沒再變（＝改完了）→ 丟給 learnDiff 比出規則 → 浮動島問
 --
 -- ## 已知會失靈的情況（失靈＝安靜地不跳，不會亂跳）
 --
@@ -88,15 +88,14 @@ local function offer(original, edited)
             return log("比不出規則：" .. tostring(r.error))
         end
         log("問：" .. r.bad .. " → " .. r.good)
-        float.bubble({
-            title = "要學起來嗎？點一下就存",
-            text = r.bad .. " → " .. r.good,
+        float.ask({
+            bad = r.bad,
+            good = r.good,
             seconds = ASK_SECONDS,
             onClick = function()
                 menubar.saveCorrection(r.bad, r.good, function(ok, msg)
                     log((ok and "已存：" or "沒存到：") .. tostring(msg))
-                    float.bubble({title = ok and "下一句就生效" or "沒存到",
-                                  text = ok and ("✅ " .. r.bad .. " → " .. r.good) or msg, seconds = 2.5})
+                    float.notify(ok and "學起來了 · 下一句生效" or "沒存到，再試一次", ok)
                 end)
             end,
         })
