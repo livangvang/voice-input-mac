@@ -33,6 +33,11 @@ MIN_BYTES=16000          # 太短的錄音不用上傳
 # 用 `voice-input-mac.sh thold` 查目前值與上次量到的音量，`thold 500` 設定。
 SPEECH_ABS_THOLD=""
 
+# 我是誰（完整 email）。面板的下拉會寫進設定檔；每次辨識都放進 X-Voice-User，
+# 伺服器靠它決定用誰的詞彙表／校正表、歷史記在誰名下。
+# 鍵名不能叫 USER：下面會 source 設定檔，USER 會蓋掉 shell 的登入名稱。
+VOICE_USER="livangvang@gmail.com"
+
 # 貼上這一段的兩個時間常數。為什麼需要它們見 emit() 的註解。
 RESTORE_DELAY=5          # 還原舊剪貼簿前等多久（給目標 App 時間去讀剪貼簿）
 MODIFIER_WAIT=1.5        # 送 Cmd+V 前最多等使用者放開修飾鍵多久
@@ -181,6 +186,7 @@ stop_and_transcribe() {
     resp="$(curl -s -m 60 -X POST --data-binary @"$WAV" \
                 -H "Content-Type: audio/wav" \
                 -H "X-Voice-Input-Client: mac" \
+                -H "X-Voice-User: ${VOICE_USER:-livangvang@gmail.com}" \
                 ${thold_hdr[@]+"${thold_hdr[@]}"} "${SERVER}/api/transcribe" 2>"$LOG")"
     if [ -z "$resp" ]; then
         die "連不上 ${SERVER}（Tailscale 有連線嗎？MagicDNS 開了嗎？）"

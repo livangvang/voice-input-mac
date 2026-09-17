@@ -55,6 +55,14 @@ body {
   font-size: 10px; letter-spacing: .28em; color: var(--steel);
 }
 .head .mark { font-family: var(--display); font-size: 13px; letter-spacing: .2em; color: var(--fg); }
+.head .user {
+  -webkit-appearance: none; appearance: none;
+  background: transparent; border: 1px solid var(--line); border-radius: 0;
+  color: var(--fg); font-family: var(--body); font-size: 11px;
+  padding: 2px 8px; cursor: pointer;
+}
+.head .user:hover, .head .user:focus { border-color: var(--steel); outline: none; }
+.head .user option { background: var(--ink); color: var(--fg); }
 
 .label {
   font-family: var(--display); font-size: 9px; letter-spacing: .24em;
@@ -99,6 +107,14 @@ button {
 button:hover { border-color: var(--steel); }
 button:disabled { color: var(--steel); cursor: default; }
 button.primary { border-color: var(--orange); }
+[hidden] { display: none !important; }
+
+/* ── 學起來 ── */
+.learn { margin-top: 10px; padding: 10px; border: 1px solid var(--orange); }
+.learn .ask { font-size: 11px; color: var(--dim); }
+.learn .rule { font-size: 15px; word-break: break-word; margin: 2px 0 8px; }
+.learn .btnrow { align-items: center; margin-top: 0; }
+.learn .count { font-size: 11px; color: var(--steel); }
 
 /* ── 閘門統計 ── */
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 11px; }
@@ -139,6 +155,11 @@ input[type=text] {
   <div class="head">
     <span class="mark">SHADOW</span>
     <span class="kicker">VOICE INPUT · MAC</span>
+    <!-- 我是誰：value 是完整 email，存進本機設定檔的 VOICE_USER，.sh 原樣放進 X-Voice-User -->
+    <select id="user" class="user" aria-label="我是誰">
+      <option value="livangvang@gmail.com">livangvang</option>
+      <option value="leochao1212@gmail.com">leochao1212</option>
+    </select>
   </div>
 
   <div class="label">STATUS</div>
@@ -161,22 +182,42 @@ input[type=text] {
     <div class="btnrow">
       <button id="copy" disabled>複製</button>
       <button id="repaste" disabled>重新貼上</button>
+      <button id="learn" disabled title="用鍵盤改好錯字後，把改好的整句選起來再按">學起來</button>
       <button id="rec" class="primary">開始錄音</button>
     </div>
+    <!-- 學起來的確認：沒按「儲存」的話 LEARN_SECONDS 秒後自動關掉、不存 -->
+    <div class="learn" id="learnbox" hidden>
+      <div class="ask">要存這條校正嗎？</div>
+      <div class="rule" id="learnrule"></div>
+      <div class="btnrow">
+        <button id="learnsave" class="primary">儲存</button>
+        <span class="count" id="learncount"></span>
+      </div>
+    </div>
+    <div class="raw" id="learnmsg"></div>
   </div>
 
   <div class="label">VOCAB</div>
   <div class="card">
     <div class="opt">
-      <div class="name">常用詞彙<div class="sub" id="vocabsub">讀取中…</div></div>
+      <div class="name">常用詞彙<div class="sub" id="vocabsub" style="white-space:pre-line">讀取中…</div></div>
     </div>
     <input type="text" id="vocabword" spellcheck="false" placeholder="要記住的詞，例如人名">
-    <div class="btnrow"><button id="vocabadd">加入詞彙</button></div>
+    <div class="btnrow">
+      <!-- 預設個人：只影響自己，不用重啟辨識服務 -->
+      <select id="vocabscope" class="user" aria-label="加到哪一份">
+        <option value="personal" selected>加到個人</option>
+        <option value="common">加到共用</option>
+      </select>
+      <button id="vocabadd">加入詞彙</button>
+    </div>
     <div class="raw" id="vocabmsg"></div>
     <div class="opt">
       <div class="name" style="color:var(--steel);font-size:11px">
         新加的詞會排到最前面（越前面越優先）。提示詞有長度上限而且早就滿了，
-        所以加一個通常會擠掉一個——擠掉誰會直接告訴你。加完辨識服務會自己重啟幾秒。
+        所以加一個通常會擠掉一個——擠掉誰會直接告訴你。
+        「加到個人」只影響你自己，下一句就生效；
+        「加到共用」大家都吃得到，加完辨識服務會自己重啟幾秒。
       </div>
     </div>
   </div>
@@ -240,7 +281,87 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
 
 let lastText = '';
 
+// ── 學起來：比對「辨識原文」和「使用者改好後選起來的文字」──
+// 最長共同前綴 + 最長共同後綴，中間那段就是「錯的 → 對的」，只提一條。
+// 用 Array.from 按字（code point）切，emoji 之類的代理對才不會被切成兩半。
+// 回傳 {bad, good} 或 {error}。上限跟伺服器的 CORRECTION_MAX_LEN 同一個數字。
+const LEARN_MAX = 50, LEARN_MIN_BAD = 2, LEARN_SECONDS = 5;
+function learnDiff(original, selected) {
+  const a = Array.from(String(original || '').trim());
+  const b = Array.from(String(selected || '').trim());
+  if (!b.length) return {error: '沒有讀到選取的文字'};
+  if (a.join('') === b.join('')) return {error: '選起來的字跟辨識原文一樣，沒有可學的差異'};
+
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+
+  // 差異太誇張 = 多半是選錯了範圍：頭尾完全對不上（短句例外，整句都錯是有可能的），
+  // 或是改出來的那段比整句原文還長。
+  if ((p + s === 0 && a.length > 4) || b.length - p - s > a.length)
+    return {error: '選起來的字跟辨識原文差太多，沒有可學的差異（要選改好的那一整句）'};
+
+  const W = c => c !== undefined && /[A-Za-z0-9_]/.test(c);
+  // 英文要擴到整個單字：校正表對純 ASCII 的錯的寫法要求單字邊界，
+  // 「Clade → Claude」只比出中間的「u」的話，這條規則永遠對不上。
+  const words = () => {
+    while (p > 0 && W(a[p - 1]) && (W(a[p]) || W(b[p]))) p--;
+    while (s > 0 && W(a[a.length - s]) && (W(a[a.length - s - 1]) || W(b[b.length - s - 1]))) s--;
+  };
+  const mid = () => [a.slice(p, a.length - s).join(''), b.slice(p, b.length - s).join('')];
+  // 還要往旁邊多帶字的情況（先右後左）：
+  //   - 錯的或對的是空的（只加字／刪字）：校正表不收空字串
+  //   - 頭尾是空白：伺服器會 strip 掉，存進去的就不是比出來的那條
+  //   - 非 ASCII 又太短：「少 → 紹」會把「多少」改壞，中文沒有詞邊界
+  const need = (bad, good) => !bad || !good || bad !== bad.trim() || good !== good.trim()
+    || (!/^[\x00-\x7f]*$/.test(bad) && Array.from(bad).length < LEARN_MIN_BAD);
+  words();
+  let [bad, good] = mid();
+  while (need(bad, good)) {
+    if (s > 0) s--; else if (p > 0) p--; else break;
+    words();
+    [bad, good] = mid();
+  }
+
+  if (need(bad, good) || bad === good) return {error: '沒有可學的差異'};
+  if (/[\t\r\n]/.test(bad + good)) return {error: '差異裡有換行，學不了（選一句就好）'};
+  if (Array.from(bad).length > LEARN_MAX || Array.from(good).length > LEARN_MAX)
+    return {error: '差異超過 ' + LEARN_MAX + ' 個字，太長了學不了'};
+  return {bad, good};
+}
+
+let learnRule = null, learnTimer = null, learnTick = null;
+// 關掉確認框。msg 有給就順便換提示文字。
+const learnClose = msg => {
+  clearTimeout(learnTimer); clearInterval(learnTick);
+  learnTimer = learnTick = null; learnRule = null;
+  $('learnbox').hidden = true;
+  if (msg != null) $('learnmsg').textContent = msg;
+};
+
 window.VI = {
+  // Lua 讀完選取的文字後呼叫：{original, selected} 或 {error}
+  learnSelection(d) {
+    const r = d.error ? d : learnDiff(d.original, d.selected);
+    if (r.error) return learnClose(r.error);
+    learnClose('');
+    learnRule = r;
+    $('learnrule').textContent = r.bad + ' → ' + r.good;
+    $('learnbox').hidden = false;
+    // 倒數：setTimeout 負責「時間到就關、不存」，setInterval 只負責每秒改畫面上的數字。
+    // 兩個分開：就算 interval 被 WebKit 節流慢了，關閉的時間點還是準的。
+    let left = LEARN_SECONDS;
+    const paint = () => { $('learncount').textContent = left + ' 秒後自動關閉，不存'; };
+    paint();
+    learnTick = setInterval(() => { if (left > 1) { left--; paint(); } }, 1000);
+    learnTimer = setTimeout(() => learnClose('沒按儲存，這條沒存'), LEARN_SECONDS * 1000);
+  },
+  // Lua 存完之後呼叫：{ok, msg}
+  learnResult(d) {
+    $('learnmsg').textContent = d.msg || '';
+  },
+
   push(s) {
     // ── 狀態 ──
     const ph = s.phase || 'idle';
@@ -301,6 +422,10 @@ window.VI = {
       $('copy').disabled = true; $('repaste').disabled = true;
     }
 
+    // 學起來看的是 last.json 的原文，不是上面的 r：本地錯誤（last.note）比較新時
+    // 結果區會顯示錯誤，但上次貼出去的字還在、還是可以學
+    $('learn').disabled = !s.learnReady;
+
     // ── 閘門統計 ──
     // 解析失敗時顯示原始字串。那行字是 speech-gate.py 印給人看的 stderr，
     // 從來不是 API，格式改了要退化成「還看得懂」而不是空白。
@@ -342,6 +467,8 @@ window.VI = {
       $('vocabsub').textContent = s.vocab.summary || '';
       $('vocabmsg').textContent = s.vocab.msg || '';
     }
+    // 我是誰：Lua 已經把清單外的值退回預設了，這裡照畫
+    if (s.user && document.activeElement !== $('user')) $('user').value = s.user;
     if (s.config) {
       if (document.activeElement !== $('server')) $('server').value = s.config.SERVER || '';
       $('trailing').checked = s.config.TRAILING_SPACE === '1';
@@ -357,6 +484,17 @@ window.VI = {
 $('copy').onclick    = () => send({action: 'copy', text: lastText});
 $('repaste').onclick = () => send({action: 'repaste', text: lastText});
 $('rec').onclick     = () => send({action: 'toggleRecord'});
+// 學起來：Lua 切回 App 送 Cmd+C 讀選取，讀完呼叫 VI.learnSelection
+$('learn').onclick = () => {
+  learnClose('讀取選起來的文字…');
+  send({action: 'learn'});
+};
+$('learnsave').onclick = () => {
+  if (!learnRule) return;
+  const r = learnRule;
+  learnClose('儲存中…');        // 先關倒數，不然存到一半時間到會蓋掉訊息
+  send({action: 'saveCorrection', bad: r.bad, good: r.good});
+};
 $('openweb').onclick = () => send({action: 'openWeb'});
 $('update').onclick  = () => send({action: 'checkUpdate'});
 // 加詞：按鈕或直接按 Enter 都可以。送出後清空輸入框，免得連按兩次加成兩筆。
@@ -365,11 +503,12 @@ const addVocab = () => {
   if (!w) return;
   $('vocabword').value = '';
   $('vocabmsg').textContent = '加入中…';
-  send({action: 'addVocab', word: w});
+  send({action: 'addVocab', word: w, scope: $('vocabscope').value});
 };
 $('vocabadd').onclick = addVocab;
 $('vocabword').onkeydown = e => { if (e.key === 'Enter') addVocab(); };
 $('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
+$('user').onchange     = e => send({action: 'setUser', user: e.target.value});
 $('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e.target.value.trim()});
 // 留白＝清掉這台的覆蓋值，回頭跟著全域值。範圍外或不是純數字的值不寫入也不夾到
 // 邊界——打錯字應該回到「還能用」的狀態，而不是靜靜套上一個你沒要求的數字。

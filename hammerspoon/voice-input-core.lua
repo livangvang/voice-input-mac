@@ -92,6 +92,26 @@ function M.setConfig(key, value)
     return os.rename(tmp, M.CONFIG) and true or false
 end
 
+-- ── 我是誰 ────────────────────────────────────────────
+-- 存在這台 Mac 的設定檔（VOICE_USER），不存伺服器——伺服器是兩人共用的。
+-- 鍵名刻意不用 USER：.sh 會 source 這個檔，USER 會蓋掉 shell 的登入名稱。
+-- 值是完整 email，.sh 原封不動放進 X-Voice-User，也是 history.jsonl 的 user 欄位。
+M.USERS = {"livangvang@gmail.com", "leochao1212@gmail.com"}
+M.DEFAULT_USER = M.USERS[1]
+
+function M.isUser(u)
+    for _, v in ipairs(M.USERS) do
+        if v == u then return true end
+    end
+    return false
+end
+
+--- 目前使用者。沒存過或存了清單外的值，都退回預設。
+function M.user()
+    local u = M.config().VOICE_USER
+    return M.isUser(u) and u or M.DEFAULT_USER
+end
+
 function M.server()
     local s = M.config().SERVER
     if s and s ~= "" then return (s:gsub("/$", "")) end
@@ -184,6 +204,16 @@ function M.lastResult()
         return nil
     end
     return r
+end
+
+--- last.json 裡的辨識原文（「學起來」比對用）；沒有就回 nil。
+-- 刻意不看 last.note：本地錯誤只代表「後來那次沒成功」，上次貼出去的字還是這份。
+function M.lastText()
+    local raw = readFile(M.LAST)
+    if not raw or raw == "" then return nil end
+    local ok, d = pcall(hs.json.decode, raw)
+    if not ok or type(d) ~= "table" or type(d.text) ~= "string" or d.text == "" then return nil end
+    return d.text
 end
 
 -- ── HTTP（只做讀取）───────────────────────────────────
