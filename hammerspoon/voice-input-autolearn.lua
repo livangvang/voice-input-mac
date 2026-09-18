@@ -8,7 +8,10 @@
 -- 用 macOS 的輔助使用 API（hs.axuielement）讀**目前輸入框的全文**：
 --   1. 貼上後讀一次，在全文裡找到剛貼的那句 → 記下它前面和後面的字（prefix / suffix）
 --   2. 之後每 POLL 秒再讀一次。prefix 和 suffix 都還在的話，夾在中間的就是「那句現在的樣子」
---   3. 中間那段跟原文不一樣、而且 IDLE 秒沒再變（＝改完了）→ 丟給 learnDiff 比出規則 → 浮動島問
+--   3. 中間那段跟原文不一樣、而且 IDLE 秒沒再變（＝改完了）→ 丟給 learnDiff 比出規則
+--   4. 比出來的規則像「改錯字」才問（M.isTypoFix）：換掉一個詞、字數一樣。
+--      刪字、加字、整句改寫、只改標點都不問——那是在改句子，不是辨識錯。
+--      這條只管自動偵測；面板裡手動「學起來」是使用者自己選的，照舊。
 --
 -- ## 已知會失靈的情況（失靈＝安靜地不跳，不會亂跳）
 --
@@ -30,10 +33,11 @@ local M = {}
 
 local PASTE_WAIT = 0.8        -- 結果出來後等多久才讀輸入框（等 Cmd+V 真的貼完）
 local POLL = 0.7              -- 每幾秒讀一次
-local IDLE = 2.0              -- 幾秒沒再變才算「改完了」
+local IDLE = 3.0              -- 幾秒沒再變才算「改完了」
 local TRACK_MAX = 90          -- 最多追幾秒
 local FRESH = 5               -- 結果檔比這還舊就不是「剛貼的」（例如 Hammerspoon 重開時補發的事件）
 local ASK_SECONDS = 5
+local TYPO_MAX = 4            -- 中文錯字規則最多幾個字（learnDiff 會替單字補一個鄰字，所以要留空間）
 local LOG = core.RUN .. "/autolearn.log"
 local LOG_MAX = 200 * 1024
 
@@ -81,11 +85,40 @@ local function findLast(haystack, needle)
     end
 end
 
+-- ── 像不像改錯字 ──────────────────────────────────────
+local PUNCT = {}
+for _, c in utf8.codes("，。！？、；：「」『』（）【】《》〈〉“”‘’…—～·．") do PUNCT[c] = true end
+
+local function stripPunct(s)
+    local out = {}
+    for _, c in utf8.codes(s) do
+        local ascii = c < 128 and utf8.char(c):match("[%p%s]")
+        if not ascii and not PUNCT[c] then out[#out + 1] = utf8.char(c) end
+    end
+    return table.concat(out)
+end
+
+--- learnDiff 比出來的「錯的 → 對的」像不像辨識錯字。
+-- 純英文照舊（Clade → Claude 字數本來就不同）。其他要：只差標點不算、字數一樣、不超過 TYPO_MAX。
+function M.isTypoFix(bad, good)
+    if stripPunct(bad) == stripPunct(good) then return false, "只改了標點" end
+    if (bad .. good):match("^[\0-\127]*$") then return true end
+    local nb, ng = utf8.len(bad), utf8.len(good)
+    if not nb or not ng then return false, "不是合法的 UTF-8" end
+    if nb ~= ng then return false, "字數不一樣（" .. nb .. " → " .. ng .. "），是在改句子" end
+    if nb > TYPO_MAX then return false, "改動超過 " .. TYPO_MAX .. " 個字，是在改句子" end
+    return true
+end
+
 -- ── 問使用者 ──────────────────────────────────────────
 local function offer(original, edited)
     menubar.learnDiff(original, edited, function(r)
         if not r.bad then
             return log("比不出規則：" .. tostring(r.error))
+        end
+        local typo, why = M.isTypoFix(r.bad, r.good)
+        if not typo then
+            return log("不問（" .. why .. "）：" .. r.bad .. " → " .. r.good)
         end
         log("問：" .. r.bad .. " → " .. r.good)
         float.ask({
