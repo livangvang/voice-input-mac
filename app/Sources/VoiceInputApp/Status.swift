@@ -91,7 +91,8 @@ struct AppStatus {
 
     var serverReachable: Bool?        // nil = 還沒測
     var whisperReady: Bool?
-    var threshold: Double?
+    var threshold: Double?            // Spark 的全域門檻
+    var localThreshold: Double?       // 這台 Mac 自己的門檻；nil = 跟著全域值
     var serverCheckedAt: Date?
 
     var history: [HistoryItem] = []

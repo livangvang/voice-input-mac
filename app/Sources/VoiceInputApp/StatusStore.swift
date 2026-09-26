@@ -49,6 +49,7 @@ final class StatusStore: ObservableObject {
         s.phase = StatusReader.phase()
         s.recordingSince = StatusReader.recordingSince()
         s.last = StatusReader.lastResult()
+        s.localThreshold = Sensitivity.local()
         status = s
         AppIcon.apply(status)
     }
@@ -140,6 +141,13 @@ final class StatusStore: ObservableObject {
             try? await Task.sleep(for: .seconds(2))
             await refreshProbe()
         }
+    }
+
+    /// 設定這台的靈敏度覆蓋值；nil＝改回跟著 Spark 全域值。
+    /// 寫完立刻重讀本地狀態，滑桿才不會彈回舊值再跳到新值。
+    func setThreshold(_ value: Double?) {
+        Sensitivity.setLocal(value)
+        refreshLocal()
     }
 
     func openAccessibilitySettings() {

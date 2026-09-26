@@ -14,6 +14,7 @@ struct ContentView: View {
                     header
                     verdict
                     checks
+                    sensitivity
                     lastResult
                     history
                 }
@@ -133,6 +134,17 @@ struct ContentView: View {
         let whisper = (s.whisperReady ?? false) ? "whisper 就緒" : "whisper 未就緒"
         if let t = s.threshold { return "\(whisper)．靈敏度門檻 \(Int(t))" }
         return whisper
+    }
+
+    // MARK: - 靈敏度
+
+    private var sensitivity: some View {
+        SensitivityCard(
+            local: s.localThreshold,
+            global: s.threshold,
+            lastP95: s.last?.gate?.p95,
+            onChange: { store.setThreshold($0) }
+        )
     }
 
     // MARK: - 最後一次結果

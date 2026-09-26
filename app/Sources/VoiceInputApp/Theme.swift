@@ -44,3 +44,10 @@ func axisPos(_ v: Double?) -> Double {
     let clamped = min(max(v, Theme.axisMin), Theme.axisMax)
     return min(max((log(clamped) - lo) / (hi - lo), 0), 1)
 }
+
+/// axisPos 的反函數：滑桿位置（0...1）→ 音量。靈敏度滑桿要用它把拖曳位置換回門檻值。
+func axisValue(_ pos: Double) -> Double {
+    let lo = log(Theme.axisMin)
+    let hi = log(Theme.axisMax)
+    return exp(lo + min(max(pos, 0), 1) * (hi - lo))
+}
