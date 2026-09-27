@@ -155,6 +155,24 @@ input[type=text] {
   -webkit-user-select: text;
 }
 
+/* ── 靈敏度滑桿 ──
+   跟上面的音量條同一條對數軸（0–1000 的整數位置換算 80–16000），
+   拖到哪裡直接對照音量條就知道上次那句會不會過。 */
+.thold { margin-top: 4px; }
+.thold input[type=range] {
+  -webkit-appearance: none; width: 100%; height: 4px; margin: 10px 0;
+  background: linear-gradient(to right, var(--orange) var(--p, 0%), var(--line) var(--p, 0%));
+  cursor: pointer;
+}
+.thold input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--fg); border: none;
+}
+.thold .val { display: flex; align-items: baseline; gap: 8px; font-size: 15px; color: var(--steel); }
+.thold .num { font-family: var(--display); font-size: 20px; letter-spacing: .08em; color: var(--fg); }
+.thold .reset { margin-left: auto; color: var(--orange); cursor: pointer; }
+.thold .reset[hidden] { display: none; }
+
 .foot {
   flex: none; display: flex; align-items: center; gap: 8px;
   padding: 8px 16px; border-top: 1px solid var(--line);
@@ -189,10 +207,15 @@ input[type=text] {
     <div class="meter-legend"><span class="mk" id="mklabel"></span></div>
     <div class="caption" id="caption">還沒有量測值。口述一次之後會顯示。</div>
     <!-- 靈敏度（這台 Mac 的門檻）：放在音量條正下方，調它時要對照的就是上面那條。
-         留白＝跟著 Spark 的全域值；placeholder 顯示目前實際用的數字。 -->
-    <div class="opt">
-      <div class="name">靈敏度</div>
-      <input type="text" id="localthold" spellcheck="false" style="width:96px;text-align:right">
+         拖曳中只改數字，放開才寫設定檔；「改回跟著 Spark」清掉這台的覆蓋值。 -->
+    <div class="thold">
+      <div class="opt"><div class="name">靈敏度</div></div>
+      <input type="range" id="localthold" min="0" max="1000" step="1">
+      <div class="val">
+        <span class="num" id="tholdnum">—</span>
+        <span id="tholdsrc"></span>
+        <span class="reset" id="tholdreset" hidden>改回跟著 Spark</span>
+      </div>
     </div>
   </div>
 
@@ -475,9 +498,9 @@ window.VI = {
     if (s.config) {
       if (document.activeElement !== $('server')) $('server').value = s.config.SERVER || '';
       $('trailing').checked = s.config.TRAILING_SPACE === '1';
-      if (document.activeElement !== $('localthold'))
-        $('localthold').value = s.config.SPEECH_ABS_THOLD || '';
-      $('localthold').placeholder = s.threshold ? String(s.threshold) : '';
+      tholdLocal = parseInt(s.config.SPEECH_ABS_THOLD, 10) || null;
+      tholdGlobal = s.threshold || null;
+      if (!tholdDragging) drawThold(tholdLocal || tholdGlobal);
     }
   }
 };
@@ -497,17 +520,37 @@ $('vocabword').onkeydown = e => { if (e.key === 'Enter') addVocab(); };
 $('trailing').onchange = e => send({action: 'setConfig', key: 'TRAILING_SPACE', value: e.target.checked ? '1' : '0'});
 $('user').onchange     = e => send({action: 'setUser', user: e.target.value});
 $('server').onchange   = e => send({action: 'setConfig', key: 'SERVER', value: e.target.value.trim()});
-// 留白＝清掉這台的覆蓋值，回頭跟著全域值。範圍外或不是純數字的值不寫入也不夾到
-// 邊界——打錯字應該回到「還能用」的狀態，而不是靜靜套上一個你沒要求的數字。
+// ── 靈敏度滑桿 ──
+// 滑桿位置 0–1000 對到 axisPos 那條對數軸。拖曳中（input）只重畫數字，
+// 放開（change）才寫設定檔——Lua 每 0.1 秒 push 一次狀態，拖到一半不能被它蓋回去。
+let tholdLocal = null, tholdGlobal = null, tholdDragging = false;
+const tholdFromPos = pos => {
+  const lo = Math.log(AXIS_MIN), hi = Math.log(AXIS_MAX);
+  return Math.round(Math.exp(lo + (pos / 1000) * (hi - lo)));
+};
+function drawThold(v) {
+  const r = $('localthold');
+  if (v) r.value = Math.round(axisPos(v) * 1000);
+  r.style.setProperty('--p', (r.value / 10) + '%');
+  $('tholdnum').textContent = v || '—';
+  const mine = tholdDragging || tholdLocal !== null;
+  $('tholdsrc').textContent = mine ? '這台自己的門檻' : '跟著 Spark 全域值';
+  $('tholdreset').hidden = !mine || tholdDragging;
+}
+$('localthold').oninput = e => {
+  tholdDragging = true;
+  drawThold(tholdFromPos(+e.target.value));
+};
 $('localthold').onchange = e => {
-  const raw = e.target.value.trim();
-  if (raw === '') return send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: ''});
-  const v = /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
-  if (!(v >= AXIS_MIN && v <= AXIS_MAX)) {
-    e.target.value = '';
-    $('localthold').placeholder = AXIS_MIN + '–' + AXIS_MAX;
-    return;
-  }
+  const v = tholdFromPos(+e.target.value);
+  tholdDragging = false;
+  tholdLocal = v;
+  drawThold(v);
   send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: String(v)});
+};
+$('tholdreset').onclick = () => {
+  tholdLocal = null;
+  drawThold(tholdGlobal);
+  send({action: 'setConfig', key: 'SPEECH_ABS_THOLD', value: ''});
 };
 </script>
