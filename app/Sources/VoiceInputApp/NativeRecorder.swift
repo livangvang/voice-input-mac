@@ -8,6 +8,7 @@ final class NativeRecorder: @unchecked Sendable {
     private var writer: AVAudioFile?
     private var converter: AVAudioConverter?
     private var conversionError: String?
+    private var tapInstalled = false
     private(set) var url: URL?
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -42,13 +43,27 @@ final class NativeRecorder: @unchecked Sendable {
             do { if converted.frameLength > 0 { try writer.write(from: converted) } }
             catch { self.conversionError = error.localizedDescription }
         }
+        tapInstalled = true
         do { engine.prepare(); try engine.start() }
-        catch { engine.inputNode.removeTap(onBus: 0); writer = nil; throw error }
+        catch { engine.inputNode.removeTap(onBus: 0); tapInstalled = false; writer = nil; throw error }
     }
     func stop() throws -> URL {
         engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        lock.lock(); writer = nil; converter = nil; lock.unlock()
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        lock.lock()
+        if let writer, let converter {
+            // Finish resampling the last buffered frames before closing the WAV.
+            for _ in 0..<16 {
+                guard let tail = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: 1024) else { break }
+                var error: NSError?
+                let status = converter.convert(to: tail, error: &error) { _, state in state.pointee = .endOfStream; return nil }
+                if status == .error { conversionError = error?.localizedDescription ?? "錄音轉換失敗"; break }
+                do { if tail.frameLength > 0 { try writer.write(from: tail) } }
+                catch { conversionError = error.localizedDescription; break }
+                if status == .endOfStream || tail.frameLength == 0 { break }
+            }
+        }
+        writer = nil; converter = nil; lock.unlock()
         guard let url else { throw CocoaError(.fileReadNoSuchFile) }
         if let conversionError { throw NSError(domain: "VoiceInput", code: 2, userInfo: [NSLocalizedDescriptionKey: conversionError]) }
         return url
