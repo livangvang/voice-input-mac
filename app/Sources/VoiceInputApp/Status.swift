@@ -86,7 +86,9 @@ struct AppStatus {
     var recordingSince: Date?
     var last: LastResult?
 
-    var hammerspoonRunning = false
+    var nativeHotkeysRunning = false
+    var microphoneGranted = false
+    var paired = false
     var accessibilityGranted: Bool?   // nil = 問不到（Hammerspoon 沒在跑）
 
     var serverReachable: Bool?        // nil = 還沒測
@@ -105,7 +107,7 @@ struct AppStatus {
     /// 當成「壞了」——結果權限明明正常，畫面卻紅字寫著「現在按熱鍵不會有反應」，
     /// 使用者跑去改一個根本沒壞的設定。查不到就說查不到。
     var hotkeyState: HotkeyState {
-        if !hammerspoonRunning { return .broken }   // 沒在跑是確定的事實，不必猜
+        if !nativeHotkeysRunning { return .broken }   // 沒在跑是確定的事實，不必猜
         switch accessibilityGranted {
         case .some(true): return .working
         case .some(false): return .broken

@@ -1,0 +1,127 @@
+import Foundation
+import Security
+
+struct ControlGesture {
+    enum Action: Equatable { case start, stop }
+    private var pressed: TimeInterval?
+    private var lastRelease: TimeInterval?
+    private var dirty = false
+    private var fired = -Double.infinity
+    mutating func down(at time: TimeInterval) -> Action? {
+        if pressed == nil { pressed = time; dirty = false }
+        return nil
+    }
+    mutating func otherKey() { dirty = true; lastRelease = nil }
+    mutating func up(at time: TimeInterval, recording: Bool) -> Action? {
+        defer { pressed = nil }
+        guard let pressed, time - pressed <= 0.4, !dirty else { lastRelease = nil; return nil }
+        if recording {
+            guard time - fired > 0.4 else { return nil }
+            fired = time; lastRelease = nil; return .stop
+        }
+        guard time - fired >= 1 else { lastRelease = nil; return nil }
+        if let lastRelease, time - lastRelease <= 0.4 {
+            fired = time; self.lastRelease = nil; return .start
+        }
+        lastRelease = time
+        return nil
+    }
+}
+
+enum LegacyMigration {
+    static let modules = ["voice-input-menubar", "voice-input-chime", "voice-input-run-fix",
+                          "voice-input-panel-hotkey", "voice-input-float", "voice-input-autolearn"]
+    static func disabledLoaders(_ source: String) -> String {
+        source.components(separatedBy: "\n").map { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            let recognized = modules.contains { t == "require(\"\($0)\")" || t == "require('\($0)')" }
+                || t == #"dofile(os.getenv("HOME") .. "/.hammerspoon/voice-input.lua")"#
+            return recognized ? "-- VoiceInput native migration: " + line : line
+        }.joined(separator: "\n")
+    }
+    static func configValue(_ key: String, in source: String) -> String? {
+        for line in source.components(separatedBy: "\n").reversed() {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard t.hasPrefix(key + "=") else { continue }
+            let value = t.dropFirst(key.count + 1).split(separator: "#", maxSplits: 1).first ?? ""
+            return value.trimmingCharacters(in: CharacterSet(charactersIn: "\"' \t"))
+        }
+        return nil
+    }
+    static func backupAndDisable() throws -> Bool {
+        let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hammerspoon/init.lua")
+        guard FileManager.default.fileExists(atPath: path.path) else { return false }
+        let original = try String(contentsOf: path, encoding: .utf8)
+        let updated = disabledLoaders(original)
+        guard updated != original else { return false }
+        let backup = path.appendingPathExtension("voice-input-\(Int(Date().timeIntervalSince1970)).bak")
+        try FileManager.default.copyItem(at: path, to: backup)
+        try updated.write(to: path, atomically: true, encoding: .utf8)
+        return true
+    }
+    static var needed: Bool {
+        let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hammerspoon/init.lua")
+        guard let source = try? String(contentsOf: path, encoding: .utf8) else { return false }
+        return disabledLoaders(source) != source
+    }
+}
+
+struct LearningCandidate: Equatable {
+    let bad: String
+    let good: String
+    static func diff(_ original: String, _ edited: String) -> Self? {
+        let a = Array(original), b = Array(edited)
+        guard a != b, !a.isEmpty, !b.isEmpty else { return nil }
+        var prefix = 0, suffix = 0
+        while prefix < min(a.count, b.count), a[prefix] == b[prefix] { prefix += 1 }
+        while suffix < min(a.count, b.count) - prefix,
+              a[a.count - suffix - 1] == b[b.count - suffix - 1] { suffix += 1 }
+        guard prefix + suffix > 0 || a.count <= 4 else { return nil }
+        func word(_ c: Character) -> Bool { c.isASCII && (c.isLetter || c.isNumber || c == "_") }
+        while prefix > 0, prefix < a.count, prefix < b.count,
+              word(a[prefix - 1]), word(a[prefix]) || word(b[prefix]) { prefix -= 1 }
+        while suffix > 0, a.count - suffix > 0, b.count - suffix > 0,
+              word(a[a.count - suffix]), word(a[a.count - suffix - 1]) || word(b[b.count - suffix - 1]) { suffix -= 1 }
+        var bad = String(a[prefix..<(a.count - suffix)]), good = String(b[prefix..<(b.count - suffix)])
+        while bad.isEmpty || good.isEmpty || (!bad.allSatisfy(\.isASCII) && bad.count < 2) {
+            if suffix > 0 { suffix -= 1 } else if prefix > 0 { prefix -= 1 } else { return nil }
+            bad = String(a[prefix..<(a.count - suffix)]); good = String(b[prefix..<(b.count - suffix)])
+        }
+        let ascii = (bad + good).allSatisfy(\.isASCII)
+        guard bad.count <= (ascii ? 50 : 4), good.count <= (ascii ? 50 : 4),
+              ascii || bad.count == good.count,
+              !(bad + good).contains(where: \.isNewline),
+              bad == bad.trimmingCharacters(in: .whitespaces),
+              good == good.trimmingCharacters(in: .whitespaces) else { return nil }
+        return Self(bad: bad, good: good)
+    }
+}
+
+@MainActor
+enum DeviceCredential {
+    static func query(_ server: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: "tw.shadowperformance.voiceinput.device",
+         kSecAttrAccount as String: server]
+    }
+    static func load(server: String) -> String? {
+        var q = query(server)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    static func save(_ token: String, server: String) throws {
+        var q = query(server)
+        let attributes: [String: Any] = [kSecValueData as String: Data(token.utf8),
+                                       kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        let result = SecItemUpdate(q as CFDictionary, attributes as CFDictionary)
+        if result == errSecItemNotFound {
+            q.merge(attributes) { _, new in new }
+            guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw CocoaError(.fileWriteNoPermission) }
+        } else if result != errSecSuccess { throw CocoaError(.fileWriteNoPermission) }
+    }
+    static func remove(server: String) { SecItemDelete(query(server) as CFDictionary) }
+}

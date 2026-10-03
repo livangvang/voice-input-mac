@@ -20,6 +20,16 @@ struct VoiceInputApp: App {
                     .keyboardShortcut("r", modifiers: .command)
             }
         }
+        MenuBarExtra("超簡單語音輸入", systemImage: store.status.phase == .recording ? "mic.fill" : "waveform") {
+            Button("開啟面板") { store.showPanel() }
+            Button(store.status.phase == .recording ? "結束並辨識" : "開始錄音") { store.toggleRecording() }
+            Button("取消錄音") { store.cancelRecording() }.disabled(store.status.phase != .recording)
+            Divider()
+            Button("帳號與裝置") { store.openWebVersion() }
+            Button("下載與更新") { store.openDownload() }
+            Button("結束 App") { NSApp.terminate(nil) }
+        }
+
     }
 }
 
@@ -44,6 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let id = Bundle.main.bundleIdentifier, let other = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: { $0.processIdentifier != getpid() }) {
+            other.activate(options: [.activateAllWindows]); NSApp.terminate(nil); return
+        }
         NSApp.setActivationPolicy(.regular)   // 確保出現在 Dock 與 Cmd+Tab
     }
 }

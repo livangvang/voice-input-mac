@@ -1,78 +1,28 @@
-# Dock App
+# 獨立 Mac App
 
-一個常駐 Dock 的狀態視窗。存在理由只有一個：**選單列圖示是 Hammerspoon 畫的，
-Hammerspoon 沒在跑的時候圖示會一起消失** —— 於是最需要被告知的那個故障，
-剛好是唯一看不到的。這支 App 獨立於 Hammerspoon，所以看得到。
+macOS 14+，支援 Apple Silicon 與 Intel。App 使用 AVAudioEngine 收音、原生快捷鍵及 Quartz 貼上；日常操作不需要 Hammerspoon、sox、Homebrew 或 Python。浮動島音柱仍是動畫。
 
-## 建置與安裝
+首次使用先連上 Tailscale，從 Spark 的 /download 取得正式安裝包。App 產生配對碼，在 /account 登入後確認。裝置憑證只存 Keychain；詞庫、校正及歷史由伺服器按帳號隔離。
 
-```bash
-./build.sh          # 建置 + 安裝到 ~/Applications
-./build.sh --run    # 順便開起來
+雙按 Ctrl 開始，單按 Ctrl 結束並辨識，Esc 取消。Ctrl+Option+V 可備援，Ctrl+Option+P 開面板。可關閉雙 Ctrl、設定登入啟動及本機靈敏度。首次試說需要麥克風及輔助使用授權。
+
+焦點／選取位置改變時不自動貼上，結果留在面板供複製。剪貼簿保留原格式，只有未被其他操作變更才恢復。失敗錄音留在私人 Application Support/VoiceInput/Recordings，可重試或清除，重開 App 仍可恢復。
+
+學習提示只追蹤這次貼入的文字欄位、最多 90 秒，內容只留記憶體。短詞修改會提示五秒；按學起來才新增個人校正。也可手動修正最近結果，先比較、再確認。
+
+## 建置
+
+```sh
+swift test --package-path app --disable-sandbox
+app/build.sh --candidate
 ```
 
-需要 Xcode 或 Command Line Tools（Swift 6）。
+預設產物在 app/dist，不替換正在使用的 App；產生 universal DMG、SHA-256 和 candidate.json。--install / --run 才安裝到 ~/Applications，並保留舊 App 備份。
 
-## Dock 圖示就是狀態
+正式版本：設定 VOICE_INPUT_VERSION、VOICE_INPUT_SIGNING_IDENTITY（Developer ID Application）、VOICE_INPUT_NOTARY_PROFILE，再執行 app/build.sh --release。開發／ad-hoc 憑證不能代替正式發布。發布前必須由乾淨來源建置、完成公證與真實電腦驗收。
 
-不用點開、不用切過去，掃一眼就知道能不能用：
+## 舊版遷移
 
-| 圖示 | 意思 |
-|---|---|
-| 白色音柱 | 待命，熱鍵可用 |
-| **橘色音柱 + 秒數徽章** | 收音中 |
-| 灰色音柱 | 辨識中 |
-| **灰色音柱 + 紅斜線** | 熱鍵現在按了不會有反應 |
+首次啟動若找到 Hammerspoon 語音載入設定，先阻止新版快捷鍵接管。面板提供備份及停用，只處理識別出的語音載入行，其他模組不變。舊版 IPC 可用時確認已重載；無法確認時需使用者 Reload Config 後確認。一般新電腦不會需要此步驟。
 
-橘色只用在「收音中」。壞掉一律灰階加斜線 —— 橘色代表「活著」，
-就不能同時代表「壞了」，不然一眼分不出是哪一種（跟選單列同一套規則）。
-
-## 視窗裡有什麼
-
-- **一句話結論**：可以用／熱鍵沒反應／連不到 Spark
-- **三項檢查**，壞的那項附一個直接修的按鈕：
-  - Hammerspoon 有沒有在跑 → 「啟動」
-  - 輔助使用權限 → 「開設定」
-  - Spark 連線（含 whisper 是否就緒、目前靈敏度門檻）
-- **上一句**：辨識結果、耗時，以及音量有沒有過閘門（對數軸，跟其他介面同一條軸）
-- **最近辨識**：跟 Spark、手機共用同一份歷史
-
-工具列：開始／停止錄音、重載 Hammerspoon 設定、開網頁版。
-
-關掉視窗 App 不會結束（圖示留在 Dock 才看得到狀態），要離開按 Cmd+Q。
-
-## 三個設計上的坑
-
-**不能開 sandbox。** 狀態檔在 `$DARWIN_USER_TEMP_DIR`，一開 sandbox 就會被重導到
-App 自己的 container，App 會讀到一個永遠空的目錄。`Package.swift` 和 `build.sh`
-都沒有 entitlements 是刻意的。
-
-**`hs -c` 一定要給 timeout。** Hammerspoon 沒在跑的時候它會**永遠**等下去
-（等一個不會有人回應的 message port）。沒有 `SystemProbe.run` 那層逾時保護，
-App 會在啟動後直接凍住 —— 而且凍住的時機正好是它最該說話的時候。
-
-**「不知道」不等於「壞了」。** Hammerspoon 沒在跑時查不到它的權限狀態，
-那時顯示紅燈是在指控一件沒被驗證的事，使用者會跑去改一個沒壞的設定。
-所以 `accessibilityGranted` 是 `Bool?`，nil 顯示灰燈。
-
-## 檔案
-
-| 檔案 | 職責 |
-|---|---|
-| `VoiceInputApp.swift` | 進入點、Dock 常駐行為 |
-| `StatusStore.swift` | 三種輪詢節奏（本地 0.5s／熱鍵 3s／伺服器 15s） |
-| `StatusReader.swift` | 讀 `$TMPDIR/voice-input/` 的四個狀態檔 |
-| `SystemProbe.swift` | Hammerspoon 偵測、權限查詢、執行 .sh |
-| `SparkClient.swift` | `/api/health`、`/api/history`（只做 GET） |
-| `AppIcon.swift` | 執行時畫 Dock 圖示與徽章 |
-| `ContentView.swift`／`Components.swift` | 畫面 |
-| `Theme.swift` | 配色與音量軸常數 |
-
-狀態判定邏輯（phase 覆核、last.json vs last.note 誰新誰贏、音量對數軸）
-刻意跟 `voice-input-core.lua` 一致 —— 兩個介面對同一組檔案得出不同結論的話，
-使用者不會知道該信哪一個。改一邊記得改兩邊。
-
-## 這部分不在上游
-
-Spark 的 `mac/` 沒有這個 App，它是這台 Mac 自己長出來的。
-跑 `install.sh` 不會動到 `app/`（它只覆蓋 `bin/` 和 `hammerspoon/` 那幾個檔）。
+伺服器與 Windows 實作在 livangvang/voice-input 的 codex/voice-input-accounts 分支，完整 API、遷移及驗收文件為 docs/desktop-accounts.md。兩個平台的 CI 候選包不代表已正式發布；正式下載頁只提供發布完成的版本。

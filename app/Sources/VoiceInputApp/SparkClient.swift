@@ -1,69 +1,59 @@
 import Foundation
 
-/// Spark 的唯讀 API。
-///
-/// 只做 GET。錄音和上傳留在 voice-input-mac.sh——sox 必須在 shell 裡跑、WAV 也在
-/// 那裡，而且那支腳本要能獨立運作。同一套邏輯寫兩份正是 README-mac.md 記載過的坑
-/// （舊版 Mac 端繞過 API 直接打 whisper，結果閘門、校正表、歷史全部失效）。
+@MainActor
 struct SparkClient {
     let base: String
-
-    private static let session: URLSession = {
-        let c = URLSessionConfiguration.ephemeral
-        // Tailscale 斷線時 DNS 會慢慢失敗。逾時設短一點，讓畫面早點說「連不上」，
-        // 而不是讓使用者盯著一個沒有結論的轉圈。
-        c.timeoutIntervalForRequest = 8
-        c.timeoutIntervalForResource = 12
-        c.waitsForConnectivity = false
-        return URLSession(configuration: c)
+    var token: String? = nil
+    var session: URLSession = productionSession
+    private static let productionSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }()
-
-    struct Health {
-        let whisperReady: Bool
-        let threshold: Double?
+    struct Health { let whisperReady: Bool; let threshold: Double? }
+    enum Failure: LocalizedError {
+        case message(String)
+        case unauthorized
+        var errorDescription: String? { if case let .message(s) = self { return s }; return "配對已失效，請重新配對" }
     }
-
-    func health() async -> Health? {
-        guard let obj = await getJSON("/api/health") else { return nil }
-        return Health(
-            whisperReady: obj["whisper"] as? Bool ?? false,
-            threshold: obj["threshold"] as? Double
-        )
-    }
-
-    func history(limit: Int = 12) async -> [HistoryItem] {
-        guard let obj = await getJSON("/api/history"),
-              let items = obj["items"] as? [[String: Any]]
-        else { return [] }
-
-        return items.suffix(limit).reversed().map { it in
-            let ts = it["ts"] as? String ?? ""
-            // ts 是 ISO 8601，取 HH:mm 就好——這是「剛剛講了什麼」的清單，
-            // 不是日誌，年月日在這裡沒有資訊量。
-            let time = ts.count >= 16 ? String(Array(ts)[11..<16]) : ""
-            return HistoryItem(
-                time: time,
-                text: it["text"] as? String ?? "",
-                fromWeb: (it["src"] as? String ?? "").hasPrefix("web")
-            )
+    func request(_ path: String, json: [String: Any]? = nil, audio: Data? = nil, threshold: Double? = nil) async throws -> [String: Any] {
+        guard let url = URL(string: base + path), url.scheme == "https", url.host != nil else {
+            throw Failure.message("Spark 網址需要 HTTPS")
         }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = audio == nil ? 12 : 100
+        if let token { req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        if let json { req.httpMethod = "POST"; req.httpBody = try JSONSerialization.data(withJSONObject: json); req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if let audio {
+            req.httpMethod = "POST"; req.httpBody = audio
+            req.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+            req.setValue("mac", forHTTPHeaderField: "X-Voice-Input-Client")
+            if let threshold { req.setValue(String(Int(threshold)), forHTTPHeaderField: "X-Voice-Input-Thold") }
+        }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure.message("伺服器回應格式不正確") }
+        if http.statusCode == 401 { throw Failure.unauthorized }
+        guard (200...299).contains(http.statusCode) else { throw Failure.message(obj["error"] as? String ?? "伺服器暫時無法使用") }
+        return obj
     }
-
-    private func getJSON(_ path: String) async -> [String: Any]? {
-        guard let url = URL(string: base + path) else { return nil }
-        do {
-            let (data, resp) = try await Self.session.data(from: url)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            return try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        } catch {
-            return nil   // 連不上就是連不上，呼叫端只需要知道 nil
+    func health() async -> Health? {
+        guard let obj = try? await request("/api/health") else { return nil }
+        return Health(whisperReady: obj["whisper"] as? Bool ?? false, threshold: obj["threshold"] as? Double)
+    }
+    func history(limit: Int = 12) async -> [HistoryItem] {
+        guard let obj = try? await request("/api/history"), let rows = obj["items"] as? [[String: Any]] else { return [] }
+        return rows.prefix(limit).map { row in
+            let ts = row["ts"] as? String ?? ""
+            return HistoryItem(time: ts.count >= 16 ? String(ts.dropFirst(11).prefix(5)) : "", text: row["text"] as? String ?? "", fromWeb: (row["src"] as? String ?? "").hasPrefix("web"))
         }
     }
 }
 
-private extension String {
-    /// 從字元索引取子字串。ts 是固定格式的 ISO 8601，不必為此拉一個日期解析器。
-    init(_ slice: ArraySlice<Character>) {
-        self.init(String(slice.map { $0 }))
+private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
