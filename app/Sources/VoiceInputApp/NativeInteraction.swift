@@ -6,6 +6,7 @@ final class NativeHotkeys {
     var action: ((String) -> Void)?
     var isRecording: (() -> Bool)?
     var doubleControl = true
+    var shortcut: RecordingShortcut = .controlOptionV
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var gesture = ControlGesture()
@@ -60,8 +61,7 @@ final class NativeHotkeys {
         } else if type == .keyDown {
             gesture.otherKey()
             if key == 53, isRecording?() == true { action?("cancel"); return true }
-            if key == 9, event.flags.contains([.maskControl, .maskAlternate]),
-               !event.flags.contains(.maskCommand), event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+            if shortcut.matches(key: key, modifiers: event.flags), event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                 action?("toggle"); return true
             }
             if key == 35, event.flags.contains([.maskControl, .maskAlternate]) { action?("panel"); return true }

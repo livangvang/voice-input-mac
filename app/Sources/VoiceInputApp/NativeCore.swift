@@ -1,5 +1,22 @@
 import Foundation
 import Security
+import CoreGraphics
+
+enum RecordingShortcut: String, CaseIterable {
+    case controlOptionV, controlOptionSpace, controlShiftSpace
+    var label: String {
+        switch self {
+        case .controlOptionV: "Ctrl + Option + V"
+        case .controlOptionSpace: "Ctrl + Option + 空白鍵"
+        case .controlShiftSpace: "Ctrl + Shift + 空白鍵"
+        }
+    }
+    func matches(key: Int64, modifiers: CGEventFlags) -> Bool {
+        let required: CGEventFlags = self == .controlShiftSpace ? [.maskControl, .maskShift] : [.maskControl, .maskAlternate]
+        return key == (self == .controlOptionV ? 9 : 49)
+            && modifiers.intersection([.maskControl, .maskAlternate, .maskShift, .maskCommand]) == required
+    }
+}
 
 struct ControlGesture {
     enum Action: Equatable { case start, stop }

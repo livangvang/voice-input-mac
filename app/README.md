@@ -4,7 +4,7 @@ macOS 14+，支援 Apple Silicon 與 Intel。App 使用 AVAudioEngine 收音、�
 
 首次使用先連上 Tailscale，從 Spark 的 /download 取得正式安裝包。App 產生配對碼，在 /account 登入後確認。裝置憑證只存 Keychain；詞庫、校正及歷史由伺服器按帳號隔離。
 
-雙按 Ctrl 開始，單按 Ctrl 結束並辨識，Esc 取消。Ctrl+Option+V 可備援，Ctrl+Option+P 開面板。可關閉雙 Ctrl、設定登入啟動及本機靈敏度。首次試說需要麥克風及輔助使用授權。
+雙按 Ctrl 開始，單按 Ctrl 結束並辨識，Esc 取消。Ctrl+Option+V 可備援，Ctrl+Option+P 開面板。可關閉雙 Ctrl、選擇開始／結束的快捷鍵，設定登入啟動及本機靈敏度。首次試說需要麥克風及輔助使用授權。
 
 焦點／選取位置改變時不自動貼上，結果留在面板供複製。剪貼簿保留原格式，只有未被其他操作變更才恢復。失敗錄音留在私人 Application Support/VoiceInput/Recordings，可重試或清除，重開 App 仍可恢復。
 

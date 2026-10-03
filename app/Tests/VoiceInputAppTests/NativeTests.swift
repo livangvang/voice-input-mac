@@ -2,6 +2,12 @@ import XCTest
 @testable import VoiceInputApp
 
 final class NativeTests: XCTestCase {
+    func testShortcutRequiresExactModifiers() {
+        XCTAssertTrue(RecordingShortcut.controlOptionV.matches(key: 9, modifiers: [.maskControl, .maskAlternate]))
+        XCTAssertFalse(RecordingShortcut.controlOptionV.matches(key: 9, modifiers: [.maskControl, .maskAlternate, .maskShift]))
+        XCTAssertTrue(RecordingShortcut.controlShiftSpace.matches(key: 49, modifiers: [.maskControl, .maskShift, .maskAlphaShift]))
+        XCTAssertFalse(RecordingShortcut.controlShiftSpace.matches(key: 9, modifiers: [.maskControl, .maskShift]))
+    }
     func testDoubleControlAndDirtyChord() {
         var g = ControlGesture()
         XCTAssertNil(g.down(at: 1))

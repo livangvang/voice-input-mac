@@ -47,7 +47,10 @@ struct ContentView: View {
                     }
                     GroupBox("這台電腦的設定") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("使用雙按 Ctrl（仍可用 Ctrl+Option+V）", isOn: Binding(get: { store.doubleControl }, set: { store.configureHotkey($0) }))
+                            Toggle("使用雙按 Ctrl", isOn: Binding(get: { store.doubleControl }, set: { store.configureHotkey($0) }))
+                            Picker("開始／結束快捷鍵", selection: Binding(get: { store.shortcut }, set: { store.configureShortcut($0) })) {
+                                ForEach(RecordingShortcut.allCases, id: \.self) { Text($0.label).tag($0) }
+                            }
                             Toggle("登入時啟動", isOn: Binding(get: { store.launchAtLogin }, set: { store.setLaunchAtLogin($0) }))
                             TextField("Spark HTTPS 網址", text: $serverInput)
                             Button("儲存伺服器網址") { store.setServer(serverInput) }

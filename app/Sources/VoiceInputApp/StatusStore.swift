@@ -18,6 +18,7 @@ final class StatusStore: ObservableObject {
     @Published private(set) var legacyPending = LegacyMigration.needed
     @Published private(set) var updateVersion: String?
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
+    @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
     private let hotkeys = NativeHotkeys()
     private var recorder: NativeRecorder?
     private var target: NativePaste.Target?
@@ -84,6 +85,7 @@ final class StatusStore: ObservableObject {
         status.accessibilityGranted = AXIsProcessTrusted()
         status.microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         hotkeys.doubleControl = doubleControl
+        hotkeys.shortcut = shortcut
         if status.accessibilityGranted == true && !legacyPending && !legacyReloadPending {
             status.nativeHotkeysRunning = hotkeys.start()
         } else { hotkeys.stop(); status.nativeHotkeysRunning = false }
@@ -111,6 +113,7 @@ final class StatusStore: ObservableObject {
         status.serverReachable = nil; status.whisperReady = nil; refreshNow()
     }
     func configureHotkey(_ enabled: Bool) { doubleControl = enabled; UserDefaults.standard.set(enabled, forKey: "doubleControl") }
+    func configureShortcut(_ value: RecordingShortcut) { shortcut = value; hotkeys.shortcut = value; UserDefaults.standard.set(value.rawValue, forKey: "recordingShortcut") }
     func setLaunchAtLogin(_ enabled: Bool) {
         do { if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }; objectWillChange.send() }
         catch { message = "登入啟動設定失敗：\(error.localizedDescription)" }
