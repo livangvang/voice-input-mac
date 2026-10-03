@@ -118,6 +118,8 @@ enum NativePaste {
     }
     static func paste(_ text: String, to target: Target) -> Bool {
         guard sameFocus(target, requireSelection: true) else { return false }
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else { return false }
         let board = NSPasteboard.general
         let old = (board.pasteboardItems ?? []).map { item -> NSPasteboardItem in
             let copy = NSPasteboardItem()
@@ -126,8 +128,6 @@ enum NativePaste {
         }
         board.clearContents(); board.setString(text, forType: .string)
         let count = board.changeCount
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else { return false }
         down.flags = .maskCommand; up.flags = .maskCommand
         let stillFocused = sameFocus(target, requireSelection: true)
         if stillFocused { down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap) }
