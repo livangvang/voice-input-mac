@@ -2,7 +2,7 @@
 # Build an isolated universal candidate by default; --install explicitly replaces the installed app.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION="${VOICE_INPUT_VERSION:-1.1.1}"
+VERSION="${VOICE_INPUT_VERSION:-1.1.2}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid version'; exit 1; }
 OUTPUT="${VOICE_INPUT_OUTPUT:-$PWD/dist}"
 SCRATCH="${VOICE_INPUT_SCRATCH:-$PWD/.build-universal}"
@@ -18,6 +18,7 @@ BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --scratch-path "$SC
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/VoiceInputApp" "$APP/Contents/MacOS/$APP_NAME"
+cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -27,6 +28,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
 <key>CFBundleExecutable</key><string>$APP_NAME</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string>
 <key>CFBundleVersion</key><string>$VERSION</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

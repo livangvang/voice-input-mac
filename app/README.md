@@ -26,3 +26,9 @@ app/build.sh --candidate
 首次啟動若找到 Hammerspoon 語音載入設定，先阻止新版快捷鍵接管。面板提供備份及停用，只處理識別出的語音載入行，其他模組不變。舊版 IPC 可用時確認已重載；無法確認時需使用者 Reload Config 後確認。一般新電腦不會需要此步驟。
 
 伺服器與 Windows 實作在 livangvang/voice-input 的 codex/voice-input-accounts 分支，完整 API、遷移及驗收文件為 docs/desktop-accounts.md。兩個平台的 CI 候選包不代表已正式發布；正式下載頁只提供發布完成的版本。
+
+## App 圖示
+
+圖示沿用浮動島的三根音柱與外圍圓環，黑底、橘色中央音柱、白色兩側音柱。Dock 仍會顯示錄音、辨識與停用狀態；浮動島動畫維持原設定。
+
+`Sources/VoiceInputApp/VoiceLogo.swift` 是 Dock 與圖檔的共同繪製來源。修改後執行 `./scripts/generate-icons.sh` 更新 `Assets/AppIcon.icns` 及 `Assets/logo.png`；`Assets/logo.svg` 是對應的向量稿。安裝包透過 `CFBundleIconFile` 帶入 Finder 圖示。
