@@ -23,8 +23,18 @@ struct ContentView: View {
                     GroupBox("帳號") {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(store.accountName ?? "尚未配對這台 Mac")
-                            if let code = store.pairCode { Text(code).font(.system(.title, design: .monospaced)).textSelection(.enabled); Text("在網站確認這組配對碼，十分鐘內有效。").font(.caption) }
-                            HStack { Button(store.pairCode == nil ? "產生配對碼" : "重新配對") { store.pair() }; Button("帳號與裝置") { store.openWebVersion() } }
+                            if store.status.paired {
+                                Button("帳號與裝置") { store.openWebVersion() }
+                            } else {
+                                Button(store.pairCode == nil ? "連結我的帳號" : "再次開啟確認頁") { store.linkAccount() }
+                                Text("網頁會自動帶入這台 Mac。確認帳號與電腦，按「允許連結」即可，不必複製配對碼。").font(.caption)
+                                if let code = store.pairCode {
+                                    DisclosureGroup("手動連結（需要時使用）") {
+                                        Text(code).font(.system(.title, design: .monospaced)).textSelection(.enabled)
+                                        Text("若帳號在另一個瀏覽器登入，請回到該瀏覽器的帳號頁使用這組碼。十分鐘內有效。").font(.caption)
+                                    }
+                                }
+                            }
                             if let version = store.updateVersion { Button("下載新版本 \(version)") { store.openDownload() } }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }

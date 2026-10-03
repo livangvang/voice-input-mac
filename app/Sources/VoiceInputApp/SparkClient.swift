@@ -12,6 +12,7 @@ struct SparkClient {
         return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }()
     struct Health { let whisperReady: Bool; let threshold: Double? }
+    struct Pairing { let deviceCode: String; let userCode: String; let verificationURL: String }
     enum Failure: LocalizedError {
         case message(String)
         case unauthorized
@@ -40,6 +41,15 @@ struct SparkClient {
     func health() async -> Health? {
         guard let obj = try? await request("/api/health") else { return nil }
         return Health(whisperReady: obj["whisper"] as? Bool ?? false, threshold: obj["threshold"] as? Double)
+    }
+    func startPairing(name: String) async throws -> Pairing {
+        let response = try await request("/api/pair/start", json: ["name": name, "platform": "mac"])
+        guard let secret = response["device_code"] as? String, !secret.isEmpty,
+              let code = response["user_code"] as? String,
+              code.range(of: "^[A-HJ-NP-Z2-9]{8}$", options: .regularExpression) != nil else {
+            throw Failure.message("連結資料不完整，請稍後重新按「連結我的帳號」。")
+        }
+        return Pairing(deviceCode: secret, userCode: code, verificationURL: base + "/account#pair=" + code)
     }
     func history(limit: Int = 12) async -> [HistoryItem] {
         guard let obj = try? await request("/api/history"), let rows = obj["items"] as? [[String: Any]] else { return [] }

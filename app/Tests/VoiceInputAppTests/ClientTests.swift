@@ -7,11 +7,15 @@ private final class ResponseFixture: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let status = request.url!.path == "/revoked" ? 401 : 200
-        let response: [String: Any] = status == 401 ? ["error":"revoked"] :
+        var response: [String: Any] = status == 401 ? ["error":"revoked"] :
             ["token": request.value(forHTTPHeaderField: "Authorization") ?? "",
              "spoof": request.value(forHTTPHeaderField: "X-Voice-User") ?? "",
              "contentType": request.value(forHTTPHeaderField: "Content-Type") ?? "",
              "threshold": request.value(forHTTPHeaderField: "X-Voice-Input-Thold") ?? ""]
+        if request.url!.path == "/api/pair/start" {
+            let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
+            response = ["device_code":"synthetic-device-secret", "user_code":body["name"] as? String == "invalid" ? "bad#login=secret" : "ABCD2345"]
+        }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: response))
         client?.urlProtocolDidFinishLoading(self)
@@ -46,5 +50,27 @@ final class ClientTests: XCTestCase {
         do { _ = try await c.request("/api/me"); XCTFail("should reject HTTP") }
         catch SparkClient.Failure.message(let message) { XCTAssertTrue(message.contains("HTTPS")) }
         catch { XCTFail("wrong error") }
+    }
+    @MainActor
+    func testPairingOpensAccountConfirmationWithoutSendingDeviceSecretToBrowser() async throws {
+        let pairing = try await client().startPairing(name: "我的 Mac")
+        XCTAssertEqual(pairing.verificationURL, "https://fixture.example/account#pair=ABCD2345")
+        XCTAssertFalse(pairing.verificationURL.contains(pairing.deviceCode))
+    }
+    @MainActor
+    func testMalformedPairingResponseCannotOpenAnUnrelatedBrowserAction() async {
+        do { _ = try await client().startPairing(name: "invalid"); XCTFail("should reject malformed response") }
+        catch SparkClient.Failure.message { }
+        catch { XCTFail("wrong error") }
+    }
+}
+
+private extension InputStream {
+    func readAll() -> Data {
+        open(); defer { close() }
+        var result = Data()
+        var bytes = [UInt8](repeating: 0, count: 1024)
+        while true { let count = read(&bytes, maxLength: bytes.count); if count <= 0 { break }; result.append(contentsOf: bytes.prefix(count)) }
+        return result
     }
 }

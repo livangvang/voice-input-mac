@@ -141,25 +141,31 @@ final class StatusStore: ObservableObject {
     }
     func confirmLegacyReload() { legacyReloadPending = false; UserDefaults.standard.set(false, forKey: "legacyReloadPending"); refreshPermissions() }
     var needsLegacyReload: Bool { legacyReloadPending }
+    func linkAccount() {
+        if let pairCode { open(server + "/account#pair=" + pairCode) }
+        else { pair() }
+    }
     func pair() {
         guard status.phase == .idle else { message = "請先結束這次錄音與辨識"; return }
         pairTask?.cancel()
         pairTask = Task {
             do {
                 let origin = SparkClient(base: server)
-                let p = try await origin.request("/api/pair/start", json: ["name": Host.current().localizedName ?? "我的 Mac", "platform": "mac"])
-                guard let secret = p["device_code"] as? String, let code = p["user_code"] as? String else { return }
-                pairCode = code; open(server + "/account")
+                let pairing = try await origin.startPairing(name: Host.current().localizedName ?? "我的 Mac")
+                try Task.checkCancellation()
+                pairCode = pairing.userCode
+                message = "請在網頁確認帳號與電腦，按「允許連結」後會自動完成。"
+                open(pairing.verificationURL)
                 for _ in 0..<200 {
                     try await Task.sleep(for: .seconds(3))
-                    let result = try await origin.request("/api/pair/exchange", json: ["device_code": secret])
+                    let result = try await origin.request("/api/pair/exchange", json: ["device_code": pairing.deviceCode])
                     if let token = result["token"] as? String {
                         try Task.checkCancellation()
                         try DeviceCredential.save(token, server: origin.base)
                         pairCode = nil; message = "已配對這台 Mac"; await refreshRemote(); return
                     }
                 }
-                pairCode = nil; message = "配對已過期，請重新產生配對碼"
+                pairCode = nil; message = "連結已過期，請重新按「連結我的帳號」。"
             } catch is CancellationError { }
             catch { if !Task.isCancelled { pairCode = nil; message = error.localizedDescription } }
         }
