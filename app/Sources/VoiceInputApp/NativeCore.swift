@@ -6,7 +6,7 @@ import OSLog
 
 enum VoiceDiagnostics {
     private static let logger = Logger(subsystem: "tw.shadowperformance.voiceinput", category: "input")
-    enum Event: String { case engineStarted, inputSamples, inputNonzeroSamples, recordingArchiveFailed, recordingStarted, recordingStopped, recordingFailed, gateRejected, recognitionSkipped, textReady, pasteSent, pasteHeld, uploadFailed }
+    enum Event: String { case engineStarted, inputSamples, inputNonzeroSamples, recordingArchiveFailed, startCuePlayed, finishCuePlayed, cueUnavailable, recordingStarted, recordingStopped, recordingFailed, gateRejected, recognitionSkipped, textReady, pasteSent, pasteHeld, uploadFailed }
     static func record(_ event: Event, count: Int = 0, confirmed: Bool = false) {
         // Only fixed event names and counts: no audio, transcript, window title, account or credential.
         logger.notice("event=\(event.rawValue, privacy: .public) count=\(count, privacy: .public) confirmed=\(confirmed, privacy: .public)")

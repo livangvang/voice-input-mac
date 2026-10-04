@@ -25,6 +25,7 @@ final class StatusStore: ObservableObject {
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
     @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
     private let hotkeys = NativeHotkeys()
+    private let recordingSounds = RecordingSounds()
     private var recorder: NativeRecorder?
     private var target: NativePaste.Target?
     private var island: FloatingIsland?
@@ -286,13 +287,14 @@ final class StatusStore: ObservableObject {
         do {
             try recorder.start(); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
             VoiceDiagnostics.record(.recordingStarted)
-            NSSound(named: "Tink")?.play(); renderIsland()
+            recordingSounds.play(.start); renderIsland()
             let session = UUID(); operation = session
             Task { try? await Task.sleep(for: .seconds(180)); if operation == session && status.phase == .recording { finishRecording() } }
         } catch { recorder.cancel(); message = error.localizedDescription; VoiceDiagnostics.record(.recordingFailed); notify(.microphone) }
     }
     func finishRecording() {
         guard status.phase == .recording, let recorder else { return }
+        defer { recordingSounds.play(.finish) }
         do { let url = try recorder.stop(); self.recorder = nil; VoiceDiagnostics.record(.recordingStopped); upload(url, target: target) }
         catch {
             if let url = recorder.url {
@@ -359,7 +361,6 @@ final class StatusStore: ObservableObject {
                         VoiceDiagnostics.record(.pasteHeld)
                         notify(.copy)
                     }
-                    NSSound(named: "Pop")?.play()
                     clearRetry()
                     // A slow history refresh must not keep the next recording blocked.
                     Task {

@@ -2,7 +2,7 @@
 # Build an isolated universal candidate by default; --install explicitly replaces the installed app.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION="${VOICE_INPUT_VERSION:-1.1.7}"
+VERSION="${VOICE_INPUT_VERSION:-1.1.8}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid version'; exit 1; }
 OUTPUT="${VOICE_INPUT_OUTPUT:-$PWD/dist}"
 SCRATCH="${VOICE_INPUT_SCRATCH:-$PWD/.build-universal}"
@@ -19,6 +19,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/VoiceInputApp" "$APP/Contents/MacOS/$APP_NAME"
 cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp -R "Assets/Sounds" "$APP/Contents/Resources/Sounds"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
