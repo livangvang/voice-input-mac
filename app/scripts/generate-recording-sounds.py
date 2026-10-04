@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate short wooden taps, one for start and two for finish."""
+"""Generate wooden taps: two for start, one for finish, with 15% more gain."""
 import math
 import pathlib
 import random
@@ -7,6 +7,7 @@ import struct
 import wave
 
 RATE = 48000
+GAIN_INCREASE = 1.15
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "Assets" / "Sounds"
 ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -26,14 +27,14 @@ def tap():
         attack = min(1, t / 0.0006)
         tail = min(1, (length - 1 - i) / (RATE * 0.01))
         samples.append((body + 0.38 * transient) * attack * tail)
-    gain = 32767 * 0.86 / max(abs(x) for x in samples)
+    gain = 32767 * 0.86 * GAIN_INCREASE / max(abs(x) for x in samples)
     return [round(x * gain) for x in samples]
 
 
 knock = tap()
 for name, samples in {
-    "start": knock + [0] * round(RATE * 0.04),
-    "finish": knock + [0] * round(RATE * 0.075) + knock + [0] * round(RATE * 0.04),
+    "start": knock + [0] * round(RATE * 0.075) + knock + [0] * round(RATE * 0.04),
+    "finish": knock + [0] * round(RATE * 0.04),
 }.items():
     with wave.open(str(ROOT / (name + ".wav")), "wb") as wav:
         wav.setparams((1, 2, RATE, 0, "NONE", "not compressed"))
