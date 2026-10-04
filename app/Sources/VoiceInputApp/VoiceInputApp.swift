@@ -15,6 +15,10 @@ struct VoiceInputApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) { }   // 這個 App 沒有「新增」的概念
+            CommandGroup(replacing: .appSettings) {
+                Button("設定…") { store.showPanel(page: .settings) }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .toolbar) {
                 Button("立即重新整理") { store.refreshNow() }
                     .keyboardShortcut("r", modifiers: .command)
@@ -25,8 +29,7 @@ struct VoiceInputApp: App {
             Button(store.status.phase == .recording ? "結束並辨識" : "開始錄音") { store.toggleRecording() }
             Button("取消錄音") { store.cancelRecording() }.disabled(store.status.phase != .recording)
             Divider()
-            Button("帳號與裝置") { store.openWebVersion() }
-            Button("下載與更新") { store.openDownload() }
+            Button("設定…") { store.showPanel(page: .settings) }
             Button("結束 App") { NSApp.terminate(nil) }
         }
 

@@ -4,10 +4,13 @@ import Combine
 import ServiceManagement
 import SwiftUI
 
+enum PanelPage: Hashable { case daily, settings }
+
 @MainActor
 final class StatusStore: ObservableObject {
     static let shared = StatusStore()
     @Published private(set) var status = AppStatus()
+    @Published var panelPage: PanelPage = .daily
     @Published private(set) var busy = false
     @Published var server: String
     @Published private(set) var accountName: String?
@@ -70,7 +73,7 @@ final class StatusStore: ObservableObject {
                 case .retry: retry(toCurrentField: true)
                 case .copy: copyLast()
                 case .noSpeech, .microphone: startRecording()
-                case .notReady: showPanel()
+                case .notReady: showPanel(page: .settings)
                 case .copied: break
                 }
             } else { showPanel() }
@@ -104,7 +107,8 @@ final class StatusStore: ObservableObject {
         credentialTask?.cancel()
         if status.phase == .recording { recorder?.cancel() }
     }
-    func showPanel() {
+    func showPanel(page: PanelPage = .daily) {
+        panelPage = page
         NSApp.activate(ignoringOtherApps: true)
         if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
             window.makeKeyAndOrderFront(nil)
