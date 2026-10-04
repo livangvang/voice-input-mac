@@ -11,6 +11,8 @@ struct CheckRow: View {
     let detail: String
     let state: State
     let action: (String, () -> Void)?
+    var titleSize: CGFloat = 13
+    var detailSize: CGFloat = 11
 
     private var color: Color {
         switch state {
@@ -26,10 +28,10 @@ struct CheckRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: titleSize, weight: .medium))
                     .foregroundStyle(Theme.fg)
                 Text(detail)
-                    .font(.system(size: 11))
+                    .font(.system(size: detailSize))
                     .foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -39,7 +41,7 @@ struct CheckRow: View {
             if let action {
                 Button(action.0, action: action.1)
                     .buttonStyle(.borderless)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: detailSize, weight: .medium))
                     .foregroundStyle(Theme.accent)
             }
         }
