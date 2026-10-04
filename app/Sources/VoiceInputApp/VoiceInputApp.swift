@@ -4,7 +4,7 @@ import SwiftUI
 @main
 struct VoiceInputApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var store = StatusStore()
+    @StateObject private var store = StatusStore.shared
 
     var body: some Scene {
         Window("超簡單語音輸入", id: "main") {
@@ -45,10 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 點 Dock 圖示時把視窗叫回來。沒有這段，視窗關掉之後就再也開不出來了。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            for window in sender.windows where window.canBecomeMain {
-                window.makeKeyAndOrderFront(nil)
-                return true
-            }
+            StatusStore.shared.showPanel()
         }
         return true
     }
@@ -58,5 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             other.activate(options: [.activateAllWindows]); NSApp.terminate(nil); return
         }
         NSApp.setActivationPolicy(.regular)   // 確保出現在 Dock 與 Cmd+Tab
+        // Recording, shortcuts and account loading must also start for login/background launches.
+        StatusStore.shared.start()
     }
 }

@@ -6,6 +6,7 @@ import SwiftUI
 
 @MainActor
 final class StatusStore: ObservableObject {
+    static let shared = StatusStore()
     @Published private(set) var status = AppStatus()
     @Published private(set) var busy = false
     @Published var server: String
@@ -26,6 +27,7 @@ final class StatusStore: ObservableObject {
     private var recorder: NativeRecorder?
     private var target: NativePaste.Target?
     private var island: FloatingIsland?
+    private var fallbackPanel: NSWindow?
     private var localTimer: Timer?
     private var remoteTimer: Timer?
     private var pairTask: Task<Void, Never>?
@@ -54,6 +56,7 @@ final class StatusStore: ObservableObject {
     }
     func start() {
         guard !started else { return }; started = true
+        VoiceDiagnostics.record(.engineStarted)
         island = FloatingIsland()
         island?.click = { [weak self] in
             guard let self else { return }
@@ -90,7 +93,18 @@ final class StatusStore: ObservableObject {
     }
     func showPanel() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            // Background launch may not create SwiftUI's primary scene. Keep the recovery UI reachable.
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 760),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "超簡單語音輸入"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: ContentView().environmentObject(self).preferredColorScheme(.dark))
+            window.center(); fallbackPanel = window
+            window.makeKeyAndOrderFront(nil)
+        }
     }
     private func refreshPermissions() {
         status.accessibilityGranted = AXIsProcessTrusted()
