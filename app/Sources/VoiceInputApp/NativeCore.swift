@@ -6,10 +6,35 @@ import OSLog
 
 enum VoiceDiagnostics {
     private static let logger = Logger(subsystem: "tw.shadowperformance.voiceinput", category: "input")
-    enum Event: String { case engineStarted, voiceProcessingEnabled, voiceProcessingUnavailable, voiceProcessingOff, recordingStarted, recordingStopped, recordingFailed, gateRejected, recognitionSkipped, textReady, pasteSent, pasteHeld, uploadFailed }
+    enum Event: String { case engineStarted, inputSamples, inputNonzeroSamples, recordingArchiveFailed, recordingStarted, recordingStopped, recordingFailed, gateRejected, recognitionSkipped, textReady, pasteSent, pasteHeld, uploadFailed }
     static func record(_ event: Event, count: Int = 0, confirmed: Bool = false) {
         // Only fixed event names and counts: no audio, transcript, window title, account or credential.
         logger.notice("event=\(event.rawValue, privacy: .public) count=\(count, privacy: .public) confirmed=\(confirmed, privacy: .public)")
+    }
+}
+
+enum InputNotice {
+    case noSpeech, retry, copy, notReady, microphone, copied
+    var text: String {
+        switch self {
+        case .noSpeech: "這句沒辨識到，直接再說一次"
+        case .retry: "辨識未完成，點一下重試"
+        case .copy: "文字已保留，點一下複製"
+        case .notReady: "尚未就緒，點一下查看原因"
+        case .microphone: "沒收到聲音，直接再說一次"
+        case .copied: "已複製"
+        }
+    }
+}
+
+enum RecordingArchive {
+    static var directory: URL { NativeRecorder.directory.appendingPathComponent("Saved", isDirectory: true) }
+    static func preserve(_ url: URL, replacingWith next: URL, in directory: URL = directory) throws {
+        guard url != next, url.deletingLastPathComponent() != directory,
+              FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try FileManager.default.moveItem(at: url, to: directory.appendingPathComponent(url.lastPathComponent))
     }
 }
 

@@ -21,7 +21,6 @@ final class StatusStore: ObservableObject {
     @Published private(set) var updateVersion: String?
     @Published private(set) var credentialNeedsApproval = false
     @Published private(set) var credentialLoading = false
-    @Published private(set) var noiseReduction = UserDefaults.standard.object(forKey: "noiseReduction") as? Bool ?? true
     @Published private(set) var microphoneName = "系統預設麥克風"
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
     @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
@@ -41,13 +40,11 @@ final class StatusStore: ObservableObject {
     private var started = false
     private var legacyReloadPending = false
     private var operation = UUID()
+    private var inputNotice: InputNotice?
+    private var noticeUntil = Date.distantPast
     var client: SparkClient { SparkClient(base: server, token: credentials.token(for: server)) }
     var ready: Bool { status.paired && status.microphoneGranted && status.nativeHotkeysRunning && status.serverReachable == true && status.whisperReady == true && !legacyPending && !legacyReloadPending }
     var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
-    func configureNoiseReduction(_ enabled: Bool) {
-        guard status.phase == .idle, !busy else { return }
-        noiseReduction = enabled; UserDefaults.standard.set(enabled, forKey: "noiseReduction")
-    }
 
     init() {
         let legacy = (try? String(contentsOf: Paths.config, encoding: .utf8)) ?? ""
@@ -66,7 +63,16 @@ final class StatusStore: ObservableObject {
         island = FloatingIsland()
         island?.click = { [weak self] in
             guard let self else { return }
-            if learning != nil { saveLearning() } else { showPanel() }
+            if learning != nil { saveLearning() }
+            else if status.phase == .idle, noticeUntil > Date(), let inputNotice {
+                switch inputNotice {
+                case .retry: retry(toCurrentField: true)
+                case .copy: copyLast()
+                case .noSpeech, .microphone: startRecording()
+                case .notReady: showPanel()
+                case .copied: break
+                }
+            } else { showPanel() }
         }
         hotkeys.isRecording = { [weak self] in self?.status.phase == .recording }
         hotkeys.action = { [weak self] action in
@@ -271,29 +277,29 @@ final class StatusStore: ObservableObject {
     }
     func toggleRecording() { status.phase == .recording ? finishRecording() : startRecording() }
     func startRecording() {
-        guard ready else { message = "請先完成配對、權限與伺服器檢查"; renderIsland(); return }
+        guard ready else { message = "請先完成配對、權限與伺服器檢查"; notify(.notReady); return }
         guard status.phase == .idle, !busy else { return }
-        guard retryURL == nil else { message = "上次未完成的錄音已保留，請選擇重試或重新錄一段"; showPanel(); return }
+        inputNotice = nil
         learningTask?.cancel(); learning = nil
         target = NativePaste.capture()
         let recorder = NativeRecorder()
         do {
-            try recorder.start(noiseReduction: noiseReduction); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
+            try recorder.start(); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
             VoiceDiagnostics.record(.recordingStarted)
             NSSound(named: "Tink")?.play(); renderIsland()
             let session = UUID(); operation = session
             Task { try? await Task.sleep(for: .seconds(180)); if operation == session && status.phase == .recording { finishRecording() } }
-        } catch { recorder.cancel(); message = error.localizedDescription; VoiceDiagnostics.record(.recordingFailed); showPanel() }
+        } catch { recorder.cancel(); message = error.localizedDescription; VoiceDiagnostics.record(.recordingFailed); notify(.microphone) }
     }
     func finishRecording() {
         guard status.phase == .recording, let recorder else { return }
         do { let url = try recorder.stop(); self.recorder = nil; VoiceDiagnostics.record(.recordingStopped); upload(url, target: target) }
         catch {
             if let url = recorder.url {
-                retryURL = url; UserDefaults.standard.set(url.path, forKey: "retryRecording")
+                retainForRetry(url)
             }
             self.recorder = nil; status.phase = .idle; message = error.localizedDescription; renderIsland()
-            VoiceDiagnostics.record(.recordingFailed); showPanel()
+            VoiceDiagnostics.record(.recordingFailed); notify(.microphone)
         }
     }
     func cancelRecording() {
@@ -301,11 +307,25 @@ final class StatusStore: ObservableObject {
         operation = UUID(); recorder?.cancel(); recorder = nil; status.phase = .idle; status.recordingSince = nil
         message = "已取消，沒有送出辨識"; renderIsland()
     }
-    func retry(speechConfirmed: Bool = false) {
+    func retry(speechConfirmed: Bool = false, toCurrentField: Bool = false) {
         guard !busy, !speechConfirmed || canRetryConfirmedSpeech, let url = retryURL else { return }
-        upload(url, target: nil, speechConfirmed: speechConfirmed)
+        upload(url, target: toCurrentField ? NativePaste.capture() : nil, speechConfirmed: speechConfirmed)
     }
-    func recordAgain() { guard !busy, ready else { return }; discardRetry(); startRecording() }
+    func recordAgain() { guard !busy, ready else { return }; startRecording() }
+    func openSavedRecordings() {
+        do {
+            try FileManager.default.createDirectory(at: RecordingArchive.directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            NSWorkspace.shared.open(RecordingArchive.directory)
+        } catch { message = error.localizedDescription }
+    }
+    private func retainForRetry(_ url: URL) {
+        if let previous = retryURL {
+            do { try RecordingArchive.preserve(previous, replacingWith: url) }
+            catch { VoiceDiagnostics.record(.recordingArchiveFailed) }
+        }
+        retryURL = url; UserDefaults.standard.set(url.path, forKey: "retryRecording")
+    }
     func discardRetry() {
         guard !busy else { return }
         clearRetry()
@@ -318,8 +338,9 @@ final class StatusStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "retrySpeechConfirmation")
     }
     private func upload(_ url: URL, target: NativePaste.Target?, speechConfirmed: Bool = false) {
+        inputNotice = nil
         status.phase = .transcribing; status.recordingSince = nil; busy = true; renderIsland()
-        retryURL = url; UserDefaults.standard.set(url.path, forKey: "retryRecording")
+        retainForRetry(url)
         let c = client
         uploadTask = Task {
             defer { busy = false; status.phase = .idle; renderIsland() }
@@ -336,24 +357,31 @@ final class StatusStore: ObservableObject {
                     } else {
                         message = target == nil ? "重試完成，請按「複製結果」貼到需要的地方" : "目標已改變或無法確認；結果已保留，請按複製"
                         VoiceDiagnostics.record(.pasteHeld)
+                        notify(.copy)
                     }
                     NSSound(named: "Pop")?.play()
-                    clearRetry(); status.history = await c.history()
+                    clearRetry()
+                    // A slow history refresh must not keep the next recording blocked.
+                    Task {
+                        let history = await c.history()
+                        guard c.base == server, c.token == credentials.token(for: server) else { return }
+                        status.history = history
+                    }
                 } else {
                     canRetryConfirmedSpeech = outcome.canRetryConfirmedSpeech
                     UserDefaults.standard.set(canRetryConfirmedSpeech, forKey: "retrySpeechConfirmation")
-                    message = "\(outcome.reason ?? "沒有辨識到內容")。錄音已保留，請選擇重試或重新錄一段。"
+                    message = "\(outcome.reason ?? "沒有辨識到內容")。錄音已保留，可以直接再說一次。"
                     VoiceDiagnostics.record(outcome.gate?.passed == false ? .gateRejected : .recognitionSkipped, confirmed: speechConfirmed)
-                    showPanel()
+                    notify(.noSpeech)
                 }
             } catch {
                 status.last = LastResult(kind: .error, text: nil, seconds: nil, reason: error.localizedDescription, gate: nil, at: Date())
                 message = "辨識未完成，錄音已保留，可重試：\(error.localizedDescription)"
-                VoiceDiagnostics.record(.uploadFailed, confirmed: speechConfirmed); showPanel()
+                VoiceDiagnostics.record(.uploadFailed, confirmed: speechConfirmed); notify(.retry)
             }
         }
     }
-    func copyLast() { if let text = status.last?.text { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); message = "已複製" } }
+    func copyLast() { if let text = status.last?.text { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); message = "已複製"; notify(.copied) } }
     func setThreshold(_ value: Double?) { status.localThreshold = value; if let value { UserDefaults.standard.set(value, forKey: "nativeThreshold") } else { UserDefaults.standard.set(-1.0, forKey: "nativeThreshold"); status.localThreshold = nil } }
     func refreshVocab() async {
         let c = client
@@ -394,7 +422,11 @@ final class StatusStore: ObservableObject {
     }
     private func renderIsland() {
         let text: String? = learning.map { "\($0.bad) → \($0.good) · 點一下學起來" }
+            ?? (status.phase == .idle && noticeUntil > Date() ? inputNotice?.text : nil)
         island?.update(phase: status.phase, since: status.recordingSince, message: text, asking: learning != nil)
         AppIcon.apply(status)
+    }
+    private func notify(_ notice: InputNotice) {
+        inputNotice = notice; noticeUntil = Date().addingTimeInterval(8); renderIsland()
     }
 }

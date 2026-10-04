@@ -51,17 +51,18 @@ struct ContentView: View {
                     if store.needsLegacyReload { Button("已在 Hammerspoon 完成 Reload Config") { store.confirmLegacyReload() } }
                     if !store.message.isEmpty { Text(store.message).font(.callout).foregroundStyle(Theme.warn).textSelection(.enabled) }
                     if store.retryURL != nil {
-                        GroupBox("上次錄音尚未完成") {
+                        DisclosureGroup("保留錄音（需要時重試）") {
                             VStack(alignment: .leading, spacing: 8) {
                                 if store.canRetryConfirmedSpeech {
                                     Text("音量足夠，但被防噪判定擋下。如果這段確實有說話，可重新辨識；只對這一次放寬判定。").font(.caption)
                                     Button("這次有說話，重新辨識") { store.retry(speechConfirmed: true) }.disabled(store.busy)
                                 } else { Button("重試上次錄音") { store.retry() }.disabled(store.busy) }
-                                Text("錄音保留在這台電腦，重試成功或清除後會刪除。重試的文字會保留供複製。").font(.caption).foregroundStyle(Theme.dim)
+                                Text("可直接用快捷鍵再說一次，不必先處理上一段。較早的失敗錄音會保留在這台電腦。").font(.caption).foregroundStyle(Theme.dim)
                                 HStack {
                                     Button("重新錄一段") { store.recordAgain() }.disabled(store.busy || !store.ready)
                                     Button("清除錄音", role: .destructive) { store.discardRetry() }.disabled(store.busy)
                                 }
+                                Button("查看較早保留的錄音") { store.openSavedRecordings() }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -84,9 +85,6 @@ struct ContentView: View {
                     GroupBox("這台電腦的設定") {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("收音裝置：\(store.microphoneName)（系統預設）").font(.caption)
-                            Toggle("人聲收音（降低環境音）", isOn: Binding(get: { store.noiseReduction }, set: { store.configureNoiseReduction($0) }))
-                                .disabled(s.phase != .idle || store.busy)
-                            Text("預設啟用系統人聲處理。不支援的麥克風會沿用一般收音；聲音不自然時可關閉。").font(.caption).foregroundStyle(Theme.dim)
                             Toggle("使用雙按 Ctrl", isOn: Binding(get: { store.doubleControl }, set: { store.configureHotkey($0) }))
                             Picker("開始／結束快捷鍵", selection: Binding(get: { store.shortcut }, set: { store.configureShortcut($0) })) {
                                 ForEach(RecordingShortcut.allCases, id: \.self) { Text($0.label).tag($0) }
