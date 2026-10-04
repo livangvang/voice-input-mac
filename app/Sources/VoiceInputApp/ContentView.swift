@@ -50,7 +50,21 @@ struct ContentView: View {
                     if store.legacyPending { GroupBox("舊版遷移") { VStack(alignment: .leading) { Text("已找到 Hammerspoon 語音模組。先備份並停用它，再啟用新版快捷鍵，避免重複錄音。"); Button("備份並停用舊版語音模組") { store.migrateLegacy() } } } }
                     if store.needsLegacyReload { Button("已在 Hammerspoon 完成 Reload Config") { store.confirmLegacyReload() } }
                     if !store.message.isEmpty { Text(store.message).font(.callout).foregroundStyle(Theme.warn).textSelection(.enabled) }
-                    if store.retryURL != nil { HStack { Button("重試上次錄音") { store.retry() }.disabled(store.busy); Button("清除錄音", role: .destructive) { store.discardRetry() }.disabled(store.busy) } }
+                    if store.retryURL != nil {
+                        GroupBox("上次錄音尚未完成") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if store.canRetryConfirmedSpeech {
+                                    Text("音量足夠，但被防噪判定擋下。如果這段確實有說話，可重新辨識；只對這一次放寬判定。").font(.caption)
+                                    Button("這次有說話，重新辨識") { store.retry(speechConfirmed: true) }.disabled(store.busy)
+                                } else { Button("重試上次錄音") { store.retry() }.disabled(store.busy) }
+                                Text("錄音保留在這台電腦，重試成功或清除後會刪除。重試的文字會保留供複製。").font(.caption).foregroundStyle(Theme.dim)
+                                HStack {
+                                    Button("重新錄一段") { store.recordAgain() }.disabled(store.busy || !store.ready)
+                                    Button("清除錄音", role: .destructive) { store.discardRetry() }.disabled(store.busy)
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
                     if let last = s.last { LastResultCard(result: last); HStack { Button("複製結果") { store.copyLast() }; Button("修正並學習") { edited = last.text ?? ""; editing = true }.disabled(last.text == nil) } }
                     if let learning = store.learning { GroupBox("學習提示") { VStack(alignment: .leading) { Text("\(learning.bad) → \(learning.good)"); Text("確認後會套用到以後的辨識。").font(.caption); HStack { Button("學起來") { store.saveLearning() }; Button("略過") { store.dismissLearning() } } } } }
                     SensitivityCard(local: s.localThreshold, global: s.threshold, lastP95: s.last?.gate?.p95, onChange: { store.setThreshold($0) })

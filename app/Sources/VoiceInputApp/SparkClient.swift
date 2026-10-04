@@ -18,7 +18,7 @@ struct SparkClient {
         case unauthorized
         var errorDescription: String? { if case let .message(s) = self { return s }; return "配對已失效，請重新配對" }
     }
-    func request(_ path: String, json: [String: Any]? = nil, audio: Data? = nil, threshold: Double? = nil) async throws -> [String: Any] {
+    func request(_ path: String, json: [String: Any]? = nil, audio: Data? = nil, threshold: Double? = nil, speechConfirmed: Bool = false) async throws -> [String: Any] {
         guard let url = URL(string: base + path), url.scheme == "https", url.host != nil else {
             throw Failure.message("Spark 網址需要 HTTPS")
         }
@@ -31,6 +31,7 @@ struct SparkClient {
             req.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
             req.setValue("mac", forHTTPHeaderField: "X-Voice-Input-Client")
             if let threshold { req.setValue(String(Int(threshold)), forHTTPHeaderField: "X-Voice-Input-Thold") }
+            if speechConfirmed { req.setValue("confirmed", forHTTPHeaderField: "X-Voice-Input-Speech") }
         }
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure.message("伺服器回應格式不正確") }

@@ -15,6 +15,7 @@ final class StatusStore: ObservableObject {
     @Published private(set) var words: [String] = []
     @Published private(set) var learning: LearningCandidate?
     @Published private(set) var retryURL: URL?
+    @Published private(set) var canRetryConfirmedSpeech = false
     @Published private(set) var legacyPending = LegacyMigration.needed
     @Published private(set) var updateVersion: String?
     @Published private(set) var credentialNeedsApproval = false
@@ -45,7 +46,10 @@ final class StatusStore: ObservableObject {
         server = UserDefaults.standard.string(forKey: "server") ?? LegacyMigration.configValue("SERVER", in: legacy) ?? "https://spark-cb4e.taild73ae6.ts.net"
         status.localThreshold = UserDefaults.standard.object(forKey: "nativeThreshold") as? Double ?? Sensitivity.local()
         if let threshold = status.localThreshold, threshold < Sensitivity.min { status.localThreshold = nil }
-        if let path = UserDefaults.standard.string(forKey: "retryRecording"), FileManager.default.fileExists(atPath: path) { retryURL = URL(fileURLWithPath: path) }
+        if let path = UserDefaults.standard.string(forKey: "retryRecording"), FileManager.default.fileExists(atPath: path) {
+            retryURL = URL(fileURLWithPath: path)
+            canRetryConfirmedSpeech = UserDefaults.standard.bool(forKey: "retrySpeechConfirmation")
+        }
         legacyReloadPending = UserDefaults.standard.bool(forKey: "legacyReloadPending")
     }
     func start() {
@@ -246,25 +250,28 @@ final class StatusStore: ObservableObject {
     func toggleRecording() { status.phase == .recording ? finishRecording() : startRecording() }
     func startRecording() {
         guard ready else { message = "請先完成配對、權限與伺服器檢查"; renderIsland(); return }
-        guard status.phase == .idle, !busy, retryURL == nil else { message = "請先重試或清除上次錄音"; return }
+        guard status.phase == .idle, !busy else { return }
+        guard retryURL == nil else { message = "上次未完成的錄音已保留，請選擇重試或重新錄一段"; showPanel(); return }
         learningTask?.cancel(); learning = nil
         target = NativePaste.capture()
         let recorder = NativeRecorder()
         do {
             try recorder.start(); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
+            VoiceDiagnostics.record(.recordingStarted)
             NSSound(named: "Tink")?.play(); renderIsland()
             let session = UUID(); operation = session
             Task { try? await Task.sleep(for: .seconds(180)); if operation == session && status.phase == .recording { finishRecording() } }
-        } catch { recorder.cancel(); message = error.localizedDescription }
+        } catch { recorder.cancel(); message = error.localizedDescription; VoiceDiagnostics.record(.recordingFailed); showPanel() }
     }
     func finishRecording() {
         guard status.phase == .recording, let recorder else { return }
-        do { let url = try recorder.stop(); self.recorder = nil; upload(url, target: target) }
+        do { let url = try recorder.stop(); self.recorder = nil; VoiceDiagnostics.record(.recordingStopped); upload(url, target: target) }
         catch {
             if let url = recorder.url {
                 retryURL = url; UserDefaults.standard.set(url.path, forKey: "retryRecording")
             }
             self.recorder = nil; status.phase = .idle; message = error.localizedDescription; renderIsland()
+            VoiceDiagnostics.record(.recordingFailed); showPanel()
         }
     }
     func cancelRecording() {
@@ -272,9 +279,23 @@ final class StatusStore: ObservableObject {
         operation = UUID(); recorder?.cancel(); recorder = nil; status.phase = .idle; status.recordingSince = nil
         message = "已取消，沒有送出辨識"; renderIsland()
     }
-    func retry() { if let url = retryURL { upload(url, target: nil) } }
-    func discardRetry() { if let url = retryURL { try? FileManager.default.removeItem(at: url) }; retryURL = nil; UserDefaults.standard.removeObject(forKey: "retryRecording") }
-    private func upload(_ url: URL, target: NativePaste.Target?) {
+    func retry(speechConfirmed: Bool = false) {
+        guard !busy, !speechConfirmed || canRetryConfirmedSpeech, let url = retryURL else { return }
+        upload(url, target: nil, speechConfirmed: speechConfirmed)
+    }
+    func recordAgain() { guard !busy, ready else { return }; discardRetry(); startRecording() }
+    func discardRetry() {
+        guard !busy else { return }
+        clearRetry()
+        message = "已清除上次錄音"
+    }
+    private func clearRetry() {
+        if let url = retryURL { try? FileManager.default.removeItem(at: url) }
+        retryURL = nil; canRetryConfirmedSpeech = false
+        UserDefaults.standard.removeObject(forKey: "retryRecording")
+        UserDefaults.standard.removeObject(forKey: "retrySpeechConfirmation")
+    }
+    private func upload(_ url: URL, target: NativePaste.Target?, speechConfirmed: Bool = false) {
         status.phase = .transcribing; status.recordingSince = nil; busy = true; renderIsland()
         retryURL = url; UserDefaults.standard.set(url.path, forKey: "retryRecording")
         let c = client
@@ -282,17 +303,32 @@ final class StatusStore: ObservableObject {
             defer { busy = false; status.phase = .idle; renderIsland() }
             do {
                 let data = try Data(contentsOf: url)
-                let result = try await c.request("/api/transcribe", audio: data, threshold: status.localThreshold)
-                let text = result["text"] as? String
-                status.last = LastResult(kind: text == nil ? .skipped : .ok, text: text, seconds: result["seconds"] as? Double, reason: result["reason"] as? String, gate: Gate(result["gate"] as? String), at: Date())
-                if let text, !text.isEmpty {
+                let result = try await c.request("/api/transcribe", audio: data, threshold: status.localThreshold, speechConfirmed: speechConfirmed)
+                let outcome = try TranscriptionOutcome(result)
+                status.last = LastResult(kind: outcome.succeeded ? .ok : .skipped, text: outcome.text, seconds: result["seconds"] as? Double, reason: outcome.reason, gate: outcome.gate, at: Date())
+                if let text = outcome.text {
+                    VoiceDiagnostics.record(.textReady, count: text.count, confirmed: speechConfirmed)
                     if let target, NativePaste.paste(text, to: target) {
                         message = "已輸入"; monitorEdits(target, inserted: text)
-                    } else { message = "目標已改變或無法確認；結果已保留，請按複製" }
+                        VoiceDiagnostics.record(.pasteSent)
+                    } else {
+                        message = target == nil ? "重試完成，請按「複製結果」貼到需要的地方" : "目標已改變或無法確認；結果已保留，請按複製"
+                        VoiceDiagnostics.record(.pasteHeld)
+                    }
                     NSSound(named: "Pop")?.play()
-                } else { message = result["reason"] as? String ?? "沒有辨識到內容" }
-                discardRetry(); status.history = await c.history()
-            } catch { message = "辨識未完成，錄音已保留，可重試：\(error.localizedDescription)" }
+                    clearRetry(); status.history = await c.history()
+                } else {
+                    canRetryConfirmedSpeech = outcome.canRetryConfirmedSpeech
+                    UserDefaults.standard.set(canRetryConfirmedSpeech, forKey: "retrySpeechConfirmation")
+                    message = "\(outcome.reason ?? "沒有辨識到內容")。錄音已保留，請選擇重試或重新錄一段。"
+                    VoiceDiagnostics.record(outcome.gate?.passed == false ? .gateRejected : .recognitionSkipped, confirmed: speechConfirmed)
+                    showPanel()
+                }
+            } catch {
+                status.last = LastResult(kind: .error, text: nil, seconds: nil, reason: error.localizedDescription, gate: nil, at: Date())
+                message = "辨識未完成，錄音已保留，可重試：\(error.localizedDescription)"
+                VoiceDiagnostics.record(.uploadFailed, confirmed: speechConfirmed); showPanel()
+            }
         }
     }
     func copyLast() { if let text = status.last?.text { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); message = "已複製" } }

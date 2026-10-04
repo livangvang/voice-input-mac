@@ -12,6 +12,7 @@ final class ResponseFixture: URLProtocol, @unchecked Sendable {
              "spoof": request.value(forHTTPHeaderField: "X-Voice-User") ?? "",
              "contentType": request.value(forHTTPHeaderField: "Content-Type") ?? "",
              "threshold": request.value(forHTTPHeaderField: "X-Voice-Input-Thold") ?? ""]
+        response["speech"] = request.value(forHTTPHeaderField: "X-Voice-Input-Speech") ?? ""
         if request.url!.path == "/api/health" { response["whisper"] = true }
         if request.url!.path == "/api/pair/start" {
             let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
@@ -38,6 +39,17 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(result["spoof"] as? String, "")
         XCTAssertEqual(result["contentType"] as? String, "audio/wav")
         XCTAssertEqual(result["threshold"] as? String, "1200")
+        XCTAssertEqual(result["speech"] as? String, "")
+    }
+    @MainActor
+    func testSpeechConfirmationOnlyAppliesToAnExplicitAudioRetry() async throws {
+        let result = try await client().request("/api/transcribe", audio: Data([0,1,2]), threshold: 418, speechConfirmed: true)
+        XCTAssertEqual(result["speech"] as? String, "confirmed")
+        XCTAssertEqual(result["threshold"] as? String, "418")
+        let normal = try await client().request("/api/transcribe", audio: Data([0,1,2]))
+        XCTAssertEqual(normal["speech"] as? String, "")
+        let unrelated = try await client().request("/api/me", speechConfirmed: true)
+        XCTAssertEqual(unrelated["speech"] as? String, "")
     }
     @MainActor
     func testRevokedDeviceProducesSpecificRecoveryError() async {

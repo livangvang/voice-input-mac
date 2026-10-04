@@ -2,6 +2,37 @@ import Foundation
 import Security
 import LocalAuthentication
 import CoreGraphics
+import OSLog
+
+enum VoiceDiagnostics {
+    private static let logger = Logger(subsystem: "tw.shadowperformance.voiceinput", category: "input")
+    enum Event: String { case recordingStarted, recordingStopped, recordingFailed, gateRejected, recognitionSkipped, textReady, pasteSent, pasteHeld, uploadFailed }
+    static func record(_ event: Event, count: Int = 0, confirmed: Bool = false) {
+        // Only fixed event names and counts: no audio, transcript, window title, account or credential.
+        logger.notice("event=\(event.rawValue, privacy: .public) count=\(count, privacy: .public) confirmed=\(confirmed, privacy: .public)")
+    }
+}
+
+struct TranscriptionOutcome {
+    let text: String?
+    let reason: String?
+    let gate: Gate?
+    var succeeded: Bool { text != nil }
+    var canRetryConfirmedSpeech: Bool {
+        guard !succeeded, let gate, let p95 = gate.p95, let minimum = gate.needP95,
+              let ratio = gate.ratio, let required = gate.needRatio else { return false }
+        return p95 >= minimum && ratio >= 2.0 && ratio < required
+    }
+    init(_ response: [String: Any]) throws {
+        if let error = response["error"] as? String { throw SparkClient.Failure.message(error) }
+        gate = Gate(response["gate"] as? String)
+        if response["skipped"] as? Bool == true {
+            text = nil; reason = response["reason"] as? String ?? "沒有辨識到內容"
+        } else if let value = response["text"] as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text = value; reason = nil
+        } else { throw SparkClient.Failure.message("伺服器沒有回傳辨識內容") }
+    }
+}
 
 enum RecordingShortcut: String, CaseIterable {
     case controlOptionV, controlOptionSpace, controlShiftSpace
