@@ -1,0 +1,25 @@
+name: Native Mac candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/voice-input-native']
+    paths: ['app/**', '.github/workflows/native.yml']
+permissions:
+  contents: read
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native tests
+        run: swift test --package-path app --disable-sandbox
+      - name: Universal candidate
+        run: app/build.sh --candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mac-candidate
+          path: |
+            app/dist/*.dmg
+            app/dist/candidate.json
+          retention-days: 14

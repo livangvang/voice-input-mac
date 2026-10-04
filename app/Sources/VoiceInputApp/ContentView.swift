@@ -2,221 +2,157 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: StatusStore
-
+    @State private var newWord = ""
+    @State private var edited = ""
+    @State private var editing = false
     private var s: AppStatus { store.status }
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    header
-                    verdict
-                    checks
-                    sensitivity
-                    lastResult
-                    history
-                }
-                .padding(18)
+            VStack(spacing: 0) {
+                header.padding(20)
+                Divider().overlay(Theme.cardEdge)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if store.panelPage == .daily {
+                            dailyContent
+                        } else {
+                            PanelSettingsView()
+                        }
+                    }.padding(20)
+                }.id(store.panelPage)
             }
         }
-        .frame(minWidth: 380, idealWidth: 400, minHeight: 560, idealHeight: 680)
-        .toolbar { toolbarItems }
+        .foregroundStyle(Theme.fg)
+        .frame(minWidth: 460, idealWidth: 500, minHeight: 620, idealHeight: 760)
+        .toolbar {
+            if store.panelPage == .daily {
+                Button(s.phase == .recording ? "結束並辨識" : "試說一句") { store.toggleRecording() }
+                    .disabled(s.phase == .transcribing || (!store.ready && s.phase != .recording))
+                if s.phase == .recording { Button("取消", role: .destructive) { store.cancelRecording() } }
+            }
+        }
         .onAppear { store.start() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.stop() }
+        .sheet(isPresented: $editing) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("修改辨識結果").font(.headline)
+                TextEditor(text: $edited).frame(width: 420, height: 120)
+                HStack {
+                    Button("取消") { editing = false }
+                    Button("比較修改") { store.learn(original: s.last?.text ?? "", edited: edited); editing = false }
+                }
+            }.padding(20)
+        }
     }
-
-    // MARK: - 標題
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("超簡單語音輸入")
-                .font(.system(size: 15, weight: .bold))
-                .tracking(2)
-                .foregroundStyle(Theme.fg)
+        HStack(spacing: 12) {
+            if store.panelPage == .settings {
+                Button { store.panelPage = .daily } label: { Label("返回", systemImage: "chevron.left") }
+                    .controlSize(.large).frame(minHeight: 44)
+                    .accessibilityLabel("返回語音輸入主頁")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.panelPage == .daily ? "超簡單語音輸入" : "設定").font(.title2.bold())
+                Text(store.panelPage == .daily ? "日常使用" : "帳號、這台電腦與連線")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
             Spacer()
-            Text(phaseText)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(s.phase == .recording ? Theme.accent : Theme.dim)
-        }
-    }
-
-    private var phaseText: String {
-        if let e = s.elapsed { return String(format: "收音中 %.0fs", e) }
-        return s.phase.label
-    }
-
-    // MARK: - 一句話結論
-
-    /// 整個 App 的重點：現在按下去到底有沒有用。
-    /// 其他細節都是為了回答「不能用的話是哪裡壞了」。
-    private var verdict: some View {
-        let serverOK = s.serverReachable ?? false
-
-        let (dot, title, sub): (Color, String, String) = {
-            switch s.hotkeyState {
-            case .broken:
-                return (Theme.bad, "現在按熱鍵不會有反應", "看下面哪一項是紅的")
-            case .unknown:
-                return (Theme.dimmer, "熱鍵狀態查不到",
-                        "Hammerspoon 沒回應查詢，不代表熱鍵壞了——直接按按看最準")
-            case .working:
-                return serverOK
-                    ? (Theme.good, "可以用", "連按兩下 Ctrl 開始講話，按任何一個鍵結束")
-                    : (Theme.warn, "熱鍵可用，但連不到 Spark", "錄得起來，但辨識不會有結果")
+            if store.panelPage == .daily {
+                Button { store.panelPage = .settings } label: { Label("設定", systemImage: "gearshape") }
+                    .controlSize(.large).frame(minHeight: 44)
             }
-        }()
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle().fill(dot).frame(width: 10, height: 10)
-                Text(title)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Theme.fg)
-            }
-            Text(sub)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.dim)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardEdge, lineWidth: 1))
-    }
-
-    // MARK: - 三項檢查
-
-    private var checks: some View {
-        VStack(spacing: 8) {
-            CheckRow(
-                title: "Hammerspoon",
-                detail: s.hammerspoonRunning ? "執行中" : "沒在跑，熱鍵完全不會有反應",
-                state: s.hammerspoonRunning ? .ok : .bad,
-                action: s.hammerspoonRunning ? nil : ("啟動", { store.launchHammerspoon() })
-            )
-
-            CheckRow(
-                title: "輔助使用權限",
-                detail: accessibilityDetail,
-                state: accessibilityState,
-                action: (s.accessibilityGranted == false)
-                    ? ("開設定", { store.openAccessibilitySettings() }) : nil
-            )
-
-            CheckRow(
-                title: "Spark 伺服器",
-                detail: serverDetail,
-                state: (s.serverReachable ?? false) ? .ok : (s.serverReachable == nil ? .unknown : .bad),
-                action: nil
-            )
         }
     }
 
-    private var accessibilityDetail: String {
-        switch s.accessibilityGranted {
-        case .some(true): return "已授權"
-        case .some(false): return "沒授權，收不到按鍵事件"
-        case .none: return s.hammerspoonRunning ? "問不到（IPC 沒通）" : "Hammerspoon 沒在跑，無從查起"
+    @ViewBuilder private var dailyContent: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(store.ready ? "可以用" : "尚未就緒").font(.title3.bold())
+                    Spacer()
+                    Text(s.phase.label).foregroundStyle(s.phase == .recording ? Theme.accent : Theme.dim)
+                }
+                Text(store.doubleControl ? "雙按 Ctrl 開始 · 單按 Ctrl 結束並辨識 · Esc 取消" : "\(store.shortcut.label) 開始／結束 · Esc 取消")
+                    .font(.caption)
+                Text("使用快捷鍵時，文字會輸入原本的欄位。從此視窗試說，結果會保留供複製。")
+                    .font(.caption).foregroundStyle(Theme.dim)
+                if !store.ready {
+                    Button("前往設定完成檢查") { store.panelPage = .settings }.controlSize(.large)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var accessibilityState: CheckRow.State {
-        switch s.accessibilityGranted {
-        case .some(true): return .ok
-        case .some(false): return .bad
-        case .none: return .unknown
+        if !store.message.isEmpty {
+            Text(store.message).font(.callout).foregroundStyle(Theme.warn).textSelection(.enabled)
         }
-    }
-
-    private var serverDetail: String {
-        guard let reachable = s.serverReachable else { return "檢查中…" }
-        if !reachable { return "連不上（Tailscale？MagicDNS 有打勾嗎）" }
-        let whisper = (s.whisperReady ?? false) ? "whisper 就緒" : "whisper 未就緒"
-        if let t = s.threshold { return "\(whisper)．靈敏度門檻 \(Int(t))" }
-        return whisper
-    }
-
-    // MARK: - 靈敏度
-
-    private var sensitivity: some View {
-        SensitivityCard(
-            local: s.localThreshold,
-            global: s.threshold,
-            lastP95: s.last?.gate?.p95,
-            onChange: { store.setThreshold($0) }
-        )
-    }
-
-    // MARK: - 最後一次結果
-
-    @ViewBuilder
-    private var lastResult: some View {
         if let last = s.last {
             LastResultCard(result: last)
+            HStack {
+                Button("複製結果") { store.copyLast() }.disabled(last.text == nil)
+                Button("修正並學習") { edited = last.text ?? ""; editing = true }.disabled(last.text == nil)
+            }
+        } else {
+            GroupBox("辨識結果") {
+                Text("說完第一句後，文字會顯示在這裡，可複製或修正。")
+                    .font(.callout).foregroundStyle(Theme.dim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-    }
-
-    // MARK: - 歷史
-
-    @ViewBuilder
-    private var history: some View {
-        if !s.history.isEmpty {
+        if let learning = store.learning {
+            GroupBox("學習提示") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(learning.bad) → \(learning.good)")
+                    Text("確認後會套用到以後的辨識。").font(.caption)
+                    HStack { Button("學起來") { store.saveLearning() }; Button("略過") { store.dismissLearning() } }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        if store.retryURL != nil { retainedRecording }
+        DisclosureGroup("我的常用詞：\(store.words.count) 個") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("最近辨識")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(1.5)
-                    .foregroundStyle(Theme.dimmer)
-
-                VStack(spacing: 0) {
+                HStack {
+                    TextField("加入常用詞", text: $newWord)
+                    Button("加入") { store.addWord(newWord); newWord = "" }
+                        .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty || !s.paired)
+                }
+                ForEach(store.words, id: \.self) { word in
+                    HStack { Text(word); Spacer(); Button("移除") { store.removeWord(word) } }
+                }
+            }.padding(.top, 8)
+        }
+        if !s.history.isEmpty {
+            GroupBox("我的最近辨識") {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(s.history) { item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(item.time)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(Theme.dimmer)
-                            if item.fromWeb {
-                                Text("🌐").font(.system(size: 10))
-                            }
-                            Text(item.text)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.dim)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .padding(.vertical, 6)
-                        if item.id != s.history.last?.id {
-                            Divider().overlay(Theme.cardEdge)
+                        HStack(alignment: .top) {
+                            Text(item.time).font(.caption.monospaced())
+                            Text(item.text).textSelection(.enabled)
                         }
                     }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardEdge, lineWidth: 1))
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    // MARK: - 工具列
-
-    @ToolbarContentBuilder
-    private var toolbarItems: some ToolbarContent {
-        ToolbarItemGroup {
-            Button {
-                s.phase == .recording ? store.cancelRecording() : store.toggleRecording()
-            } label: {
-                Label(s.phase == .recording ? "停止" : "開始錄音",
-                      systemImage: s.phase == .recording ? "stop.circle" : "mic.circle")
-            }
-            .disabled(store.busy && s.phase != .recording)
-
-            Button { store.reloadHammerspoon() } label: {
-                Label("重載設定", systemImage: "arrow.clockwise")
-            }
-            .disabled(!s.hammerspoonRunning)
-
-            Button { store.openWebVersion() } label: {
-                Label("網頁版", systemImage: "safari")
-            }
+    private var retainedRecording: some View {
+        DisclosureGroup("保留錄音（需要時重試）") {
+            VStack(alignment: .leading, spacing: 8) {
+                if store.canRetryConfirmedSpeech {
+                    Text("音量足夠，但被防噪判定擋下。如果這段確實有說話，可重新辨識；只對這一次放寬判定。").font(.caption)
+                    Button("這次有說話，重新辨識") { store.retry(speechConfirmed: true) }.disabled(store.busy)
+                } else {
+                    Button("重試上次錄音") { store.retry() }.disabled(store.busy)
+                }
+                Text("可直接用快捷鍵再說一次，不必先處理上一段。較早的失敗錄音會保留在這台電腦。")
+                    .font(.caption).foregroundStyle(Theme.dim)
+                HStack {
+                    Button("重新錄一段") { store.recordAgain() }.disabled(store.busy || !store.ready)
+                    Button("清除錄音", role: .destructive) { store.discardRetry() }.disabled(store.busy)
+                }
+                Button("查看較早保留的錄音") { store.openSavedRecordings() }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
         }
     }
 }
