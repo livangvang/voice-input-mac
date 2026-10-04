@@ -28,6 +28,7 @@ enum Phase: String {
 /// 那個字串**從來就不是設計成 API 的**，所以一定要保留 `raw`：
 /// 格式哪天改了，畫面要退化成「還看得懂」，不是變成空白。
 struct Gate {
+    var usesVoiceDetection: Bool { raw.hasPrefix("gate: vad") }
     let raw: String
     let p95: Double?
     let median: Double?
@@ -94,6 +95,7 @@ struct AppStatus {
     var serverReachable: Bool?        // nil = 還沒測
     var whisperReady: Bool?
     var threshold: Double?            // Spark 的全域門檻
+    var usesVoiceDetection = false
     var localThreshold: Double?       // 這台 Mac 自己的門檻；nil = 跟著全域值
     var serverCheckedAt: Date?
 

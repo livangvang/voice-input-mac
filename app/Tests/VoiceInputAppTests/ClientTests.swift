@@ -13,7 +13,10 @@ final class ResponseFixture: URLProtocol, @unchecked Sendable {
              "contentType": request.value(forHTTPHeaderField: "Content-Type") ?? "",
              "threshold": request.value(forHTTPHeaderField: "X-Voice-Input-Thold") ?? ""]
         response["speech"] = request.value(forHTTPHeaderField: "X-Voice-Input-Speech") ?? ""
-        if request.url!.path == "/api/health" { response["whisper"] = true }
+        if request.url!.path == "/api/health" {
+            response["whisper"] = true
+            if request.url!.host == "vad.fixture.example" { response["speech_gate"] = "vad" }
+        }
         if request.url!.path == "/api/pair/start" {
             let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
             response = ["device_code":"synthetic-device-secret", "user_code":body["name"] as? String == "invalid" ? "bad#login=secret" : "ABCD2345"]
@@ -26,6 +29,16 @@ final class ResponseFixture: URLProtocol, @unchecked Sendable {
 }
 
 final class ClientTests: XCTestCase {
+    @MainActor
+    func testHealthOnlyShowsAutomaticVoiceDetectionWhenServerAdvertisesIt() async throws {
+        var c = client()
+        let legacy = await c.health()
+        XCTAssertEqual(legacy?.speechGate, "energy")
+        c = SparkClient(base: "https://vad.fixture.example", session: c.session)
+        let modern = await c.health()
+        XCTAssertEqual(modern?.speechGate, "vad")
+        XCTAssertEqual(modern?.whisperReady, true)
+    }
     @MainActor
     private func client() -> SparkClient {
         let config = URLSessionConfiguration.ephemeral

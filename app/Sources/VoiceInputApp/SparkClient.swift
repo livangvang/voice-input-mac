@@ -11,7 +11,7 @@ struct SparkClient {
         config.waitsForConnectivity = false
         return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }()
-    struct Health { let whisperReady: Bool; let threshold: Double? }
+    struct Health { let whisperReady: Bool; let threshold: Double?; let speechGate: String }
     struct Pairing { let deviceCode: String; let userCode: String; let verificationURL: String }
     enum Failure: LocalizedError {
         case message(String)
@@ -41,7 +41,8 @@ struct SparkClient {
     }
     func health() async -> Health? {
         guard let obj = try? await request("/api/health") else { return nil }
-        return Health(whisperReady: obj["whisper"] as? Bool ?? false, threshold: obj["threshold"] as? Double)
+        return Health(whisperReady: obj["whisper"] as? Bool ?? false, threshold: obj["threshold"] as? Double,
+                      speechGate: obj["speech_gate"] as? String ?? "energy")
     }
     func startPairing(name: String) async throws -> Pairing {
         let response = try await request("/api/pair/start", json: ["name": name, "platform": "mac"])

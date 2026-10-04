@@ -77,7 +77,8 @@ struct LastResultCard: View {
                 .textSelection(.enabled)
 
             if let gate = result.gate {
-                GateMeter(gate: gate)
+                if gate.usesVoiceDetection { Text("人聲自動判定").font(.caption).foregroundStyle(Theme.dim) }
+                else { GateMeter(gate: gate) }
             }
         }
         .padding(14)
@@ -88,7 +89,7 @@ struct LastResultCard: View {
     private var headline: String {
         switch result.kind {
         case .ok: return "上一句"
-        case .skipped: return "被閘門擋下"
+        case .skipped: return "沒有可輸入的文字"
         case .error: return "錯誤"
         case .note: return "本地狀況"
         }

@@ -1,9 +1,23 @@
 import AVFoundation
 import Foundation
 
+enum CaptureInputSetup {
+    struct Configuration { let format: AVAudioFormat; let processed: Bool }
+    static func configure(noiseReduction: Bool, enable: () throws -> Void,
+                          reset: () -> Void, readFormat: () -> AVAudioFormat) -> Configuration {
+        var processed = false
+        if noiseReduction {
+            do { try enable(); processed = true }
+            catch { reset() }
+        }
+        // Voice processing can change the sample rate and channel count.
+        return Configuration(format: readFormat(), processed: processed)
+    }
+}
+
 // Tap callbacks and stop share the writer only under a lock. No hardware work runs in SwiftUI rendering.
 final class NativeRecorder: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let lock = NSLock()
     private var writer: AVAudioFile?
     private var converter: AVAudioConverter?
@@ -14,11 +28,17 @@ final class NativeRecorder: @unchecked Sendable {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VoiceInput/Recordings")
     }
-    func start() throws {
+    func start(noiseReduction: Bool = true) throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         let target = Self.directory.appendingPathComponent(UUID().uuidString + ".wav")
-        let input = engine.inputNode.outputFormat(forBus: 0)
+        let setup = CaptureInputSetup.configure(noiseReduction: noiseReduction, enable: {
+            try self.engine.inputNode.setVoiceProcessingEnabled(true)
+            self.engine.inputNode.isVoiceProcessingAGCEnabled = true
+            self.engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        }, reset: { self.engine = AVAudioEngine() }, readFormat: { self.engine.inputNode.outputFormat(forBus: 0) })
+        VoiceDiagnostics.record(setup.processed ? .voiceProcessingEnabled : (noiseReduction ? .voiceProcessingUnavailable : .voiceProcessingOff))
+        let input = setup.format
         guard input.sampleRate > 0, input.channelCount > 0,
               let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true),
               let converter = AVAudioConverter(from: input, to: output)

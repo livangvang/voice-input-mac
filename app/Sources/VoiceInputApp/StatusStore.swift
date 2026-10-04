@@ -21,6 +21,8 @@ final class StatusStore: ObservableObject {
     @Published private(set) var updateVersion: String?
     @Published private(set) var credentialNeedsApproval = false
     @Published private(set) var credentialLoading = false
+    @Published private(set) var noiseReduction = UserDefaults.standard.object(forKey: "noiseReduction") as? Bool ?? true
+    @Published private(set) var microphoneName = "系統預設麥克風"
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
     @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
     private let hotkeys = NativeHotkeys()
@@ -42,6 +44,10 @@ final class StatusStore: ObservableObject {
     var client: SparkClient { SparkClient(base: server, token: credentials.token(for: server)) }
     var ready: Bool { status.paired && status.microphoneGranted && status.nativeHotkeysRunning && status.serverReachable == true && status.whisperReady == true && !legacyPending && !legacyReloadPending }
     var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+    func configureNoiseReduction(_ enabled: Bool) {
+        guard status.phase == .idle, !busy else { return }
+        noiseReduction = enabled; UserDefaults.standard.set(enabled, forKey: "noiseReduction")
+    }
 
     init() {
         let legacy = (try? String(contentsOf: Paths.config, encoding: .utf8)) ?? ""
@@ -237,7 +243,9 @@ final class StatusStore: ObservableObject {
         // Network readiness does not wait for Keychain approval or account access.
         let health = await SparkClient(base: origin).health()
         guard origin == server else { return }
-        status.serverReachable = health != nil; status.whisperReady = health?.whisperReady; status.threshold = health?.threshold; status.serverCheckedAt = Date()
+        microphoneName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "系統預設麥克風"
+        status.serverReachable = health != nil; status.whisperReady = health?.whisperReady; status.threshold = health?.threshold
+        status.usesVoiceDetection = health?.speechGate == "vad"; status.serverCheckedAt = Date()
         let c = client
         if c.token != nil && health != nil {
             do {
@@ -270,7 +278,7 @@ final class StatusStore: ObservableObject {
         target = NativePaste.capture()
         let recorder = NativeRecorder()
         do {
-            try recorder.start(); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
+            try recorder.start(noiseReduction: noiseReduction); self.recorder = recorder; status.phase = .recording; status.recordingSince = Date(); message = ""
             VoiceDiagnostics.record(.recordingStarted)
             NSSound(named: "Tink")?.play(); renderIsland()
             let session = UUID(); operation = session

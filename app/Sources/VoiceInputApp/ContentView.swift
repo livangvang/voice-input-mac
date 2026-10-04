@@ -67,7 +67,14 @@ struct ContentView: View {
                     }
                     if let last = s.last { LastResultCard(result: last); HStack { Button("複製結果") { store.copyLast() }; Button("修正並學習") { edited = last.text ?? ""; editing = true }.disabled(last.text == nil) } }
                     if let learning = store.learning { GroupBox("學習提示") { VStack(alignment: .leading) { Text("\(learning.bad) → \(learning.good)"); Text("確認後會套用到以後的辨識。").font(.caption); HStack { Button("學起來") { store.saveLearning() }; Button("略過") { store.dismissLearning() } } } } }
-                    SensitivityCard(local: s.localThreshold, global: s.threshold, lastP95: s.last?.gate?.p95, onChange: { store.setThreshold($0) })
+                    if s.usesVoiceDetection {
+                        GroupBox("自動辨別人聲") {
+                            Text("會判斷錄音裡是否有人說話，不需要調整音量門檻。背景音太強時仍可能影響文字準確度。")
+                                .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        SensitivityCard(local: s.localThreshold, global: s.threshold, lastP95: s.last?.gate?.p95, onChange: { store.setThreshold($0) })
+                    }
                     DisclosureGroup("我的詞彙：\(store.words.count) 個（全表讀音比對）") {
                         VStack(alignment: .leading) {
                             HStack { TextField("加入常用詞", text: $newWord); Button("加入") { store.addWord(newWord); newWord = "" }.disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty || !s.paired) }
@@ -76,6 +83,10 @@ struct ContentView: View {
                     }
                     GroupBox("這台電腦的設定") {
                         VStack(alignment: .leading, spacing: 12) {
+                            Text("收音裝置：\(store.microphoneName)（系統預設）").font(.caption)
+                            Toggle("人聲收音（降低環境音）", isOn: Binding(get: { store.noiseReduction }, set: { store.configureNoiseReduction($0) }))
+                                .disabled(s.phase != .idle || store.busy)
+                            Text("預設啟用系統人聲處理。不支援的麥克風會沿用一般收音；聲音不自然時可關閉。").font(.caption).foregroundStyle(Theme.dim)
                             Toggle("使用雙按 Ctrl", isOn: Binding(get: { store.doubleControl }, set: { store.configureHotkey($0) }))
                             Picker("開始／結束快捷鍵", selection: Binding(get: { store.shortcut }, set: { store.configureShortcut($0) })) {
                                 ForEach(RecordingShortcut.allCases, id: \.self) { Text($0.label).tag($0) }
