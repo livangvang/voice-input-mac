@@ -7,66 +7,64 @@ final class NativeHotkeys {
     var isRecording: (() -> Bool)?
     var doubleControl = true
     var shortcut: RecordingShortcut = .controlOptionV
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
     private var gesture = ControlGesture()
     private var heldControl = Set<Int64>()
     func start() -> Bool {
-        if tap != nil { return true }
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
-        let callback: CGEventTapCallBack = { _, type, event, context in
-            guard let context else { return Unmanaged.passUnretained(event) }
-            let drop: Bool = MainActor.assumeIsolated {
-                let owner = Unmanaged<NativeHotkeys>.fromOpaque(context).takeUnretainedValue()
-                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = owner.tap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return false
-                }
-                return owner.handle(type, event)
-            }
-            return drop ? nil : Unmanaged.passUnretained(event)
+        if globalMonitor != nil && localMonitor != nil { return true }
+        let mask: NSEvent.EventTypeMask = [.flagsChanged, .keyDown]
+        // AppKit delivers copies asynchronously. A busy App cannot hold up typing
+        // in another application, and these callbacks cannot consume its events.
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            MainActor.assumeIsolated { self?.observe(event) }
         }
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                         options: .defaultTap, eventsOfInterest: CGEventMask(mask),
-                                         callback: callback, userInfo: Unmanaged.passUnretained(self).toOpaque())
-        else { return false }
-        self.tap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        self.source = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            MainActor.assumeIsolated { _ = self?.observeLocal(event) }
+            return event
+        }
+        guard globalMonitor != nil && localMonitor != nil else { stop(); return false }
         return true
     }
     func stop() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        source = nil; tap = nil; heldControl.removeAll()
+        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        globalMonitor = nil; localMonitor = nil
+        gesture = ControlGesture(); heldControl.removeAll()
     }
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
-        let key = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .flagsChanged, key == 59 || key == 62 {
-            let time = ProcessInfo.processInfo.systemUptime
-            if !heldControl.contains(key), event.flags.contains(.maskControl) {
+    func observeLocal(_ event: NSEvent) -> NSEvent {
+        observe(event)
+        return event
+    }
+    private func observe(_ event: NSEvent) {
+        // Discard queued gestures after a stall instead of starting a late recording.
+        guard ProcessInfo.processInfo.systemUptime - event.timestamp < 1.5 else {
+            gesture = ControlGesture(); heldControl.removeAll(); return
+        }
+        let key = Int64(event.keyCode)
+        let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+        if event.type == .flagsChanged, key == 59 || key == 62 {
+            let time = event.timestamp
+            if !heldControl.contains(key), flags.contains(.maskControl) {
                 heldControl.insert(key)
                 _ = gesture.down(at: time)
-                if !event.flags.intersection([.maskShift, .maskCommand, .maskAlternate]).isEmpty { gesture.otherKey() }
+                if !flags.intersection([.maskShift, .maskCommand, .maskAlternate]).isEmpty { gesture.otherKey() }
             } else {
                 heldControl.remove(key)
                 if doubleControl, let a = gesture.up(at: time, recording: isRecording?() ?? false) {
                     action?(a == .start ? "start" : "stop")
                 }
             }
-        } else if type == .flagsChanged {
+        } else if event.type == .flagsChanged {
             gesture.otherKey()
-        } else if type == .keyDown {
+        } else if event.type == .keyDown {
             gesture.otherKey()
-            if key == 53, isRecording?() == true { action?("cancel"); return true }
-            if shortcut.matches(key: key, modifiers: event.flags), event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                action?("toggle"); return true
+            if key == 53, isRecording?() == true { action?("cancel"); return }
+            if shortcut.matches(key: key, modifiers: flags), !event.isARepeat {
+                action?("toggle"); return
             }
-            if key == 35, event.flags.contains([.maskControl, .maskAlternate]) { action?("panel"); return true }
+            if key == 35, flags.contains([.maskControl, .maskAlternate]) { action?("panel") }
         }
-        return false
     }
 }
 

@@ -23,6 +23,11 @@ struct ContentView: View {
                     GroupBox("帳號") {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(store.accountName ?? "尚未配對這台 Mac")
+                            if store.credentialLoading { Text("正在讀取這台電腦的帳號憑證…").font(.caption) }
+                            if store.credentialNeedsApproval {
+                                Text("更新後需要重新允許 App 存取 Keychain 裡的帳號。伺服器連線仍可獨立檢查。").font(.caption)
+                                Button("恢復帳號存取") { store.restoreAccountAccess() }
+                            }
                             if store.status.paired {
                                 Button("帳號與裝置") { store.openWebVersion() }
                             } else {

@@ -2,7 +2,7 @@
 # Build an isolated universal candidate by default; --install explicitly replaces the installed app.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION="${VOICE_INPUT_VERSION:-1.1.2}"
+VERSION="${VOICE_INPUT_VERSION:-1.1.3}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid version'; exit 1; }
 OUTPUT="${VOICE_INPUT_OUTPUT:-$PWD/dist}"
 SCRATCH="${VOICE_INPUT_SCRATCH:-$PWD/.build-universal}"

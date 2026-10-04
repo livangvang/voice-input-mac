@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import VoiceInputApp
 
-private final class ResponseFixture: URLProtocol, @unchecked Sendable {
+final class ResponseFixture: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -12,6 +12,7 @@ private final class ResponseFixture: URLProtocol, @unchecked Sendable {
              "spoof": request.value(forHTTPHeaderField: "X-Voice-User") ?? "",
              "contentType": request.value(forHTTPHeaderField: "Content-Type") ?? "",
              "threshold": request.value(forHTTPHeaderField: "X-Voice-Input-Thold") ?? ""]
+        if request.url!.path == "/api/health" { response["whisper"] = true }
         if request.url!.path == "/api/pair/start" {
             let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
             response = ["device_code":"synthetic-device-secret", "user_code":body["name"] as? String == "invalid" ? "bad#login=secret" : "ABCD2345"]

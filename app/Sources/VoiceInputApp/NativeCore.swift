@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 import CoreGraphics
 
 enum RecordingShortcut: String, CaseIterable {
@@ -114,23 +115,42 @@ struct LearningCandidate: Equatable {
     }
 }
 
-@MainActor
-enum DeviceCredential {
-    static func query(_ server: String) -> [String: Any] {
+protocol CredentialStorage: Sendable {
+    func load(server: String, allowInteraction: Bool) async throws -> String?
+    func save(_ token: String, server: String) async throws
+}
+
+actor DeviceCredential: CredentialStorage {
+    static let shared = DeviceCredential()
+    enum Failure: LocalizedError {
+        case approvalRequired, unavailable
+        var errorDescription: String? {
+            switch self {
+            case .approvalRequired: "帳號憑證需要你的確認，請按「恢復帳號存取」。"
+            case .unavailable: "無法讀取 Keychain 帳號憑證，請解鎖 Mac 後重新嘗試。"
+            }
+        }
+    }
+    private func query(_ server: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: "tw.shadowperformance.voiceinput.device",
          kSecAttrAccount as String: server]
     }
-    static func load(server: String) -> String? {
+    func load(server: String, allowInteraction: Bool) throws -> String? {
         var q = query(server)
+        let context = LAContext()
+        context.interactionNotAllowed = !allowInteraction
+        q[kSecUseAuthenticationContext as String] = context
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
+        let result = SecItemCopyMatching(q as CFDictionary, &item)
+        if result == errSecItemNotFound { return nil }
+        if result == errSecInteractionNotAllowed || result == errSecAuthFailed { throw Failure.approvalRequired }
+        guard result == errSecSuccess, let data = item as? Data else { throw Failure.unavailable }
         return String(data: data, encoding: .utf8)
     }
-    static func save(_ token: String, server: String) throws {
+    func save(_ token: String, server: String) throws {
         var q = query(server)
         let attributes: [String: Any] = [kSecValueData as String: Data(token.utf8),
                                        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
@@ -140,5 +160,22 @@ enum DeviceCredential {
             guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw CocoaError(.fileWriteNoPermission) }
         } else if result != errSecSuccess { throw CocoaError(.fileWriteNoPermission) }
     }
-    static func remove(server: String) { SecItemDelete(query(server) as CFDictionary) }
+}
+
+@MainActor
+final class CredentialCache {
+    private let storage: any CredentialStorage
+    private var tokens: [String: String] = [:]
+    init(storage: any CredentialStorage = DeviceCredential.shared) { self.storage = storage }
+    func token(for server: String) -> String? { tokens[server] }
+    func load(server: String, allowInteraction: Bool) async throws {
+        let token = try await storage.load(server: server, allowInteraction: allowInteraction)
+        try Task.checkCancellation()
+        tokens[server] = token
+    }
+    func save(_ token: String, server: String) async throws {
+        try await storage.save(token, server: server)
+        tokens[server] = token
+    }
+    func clear(server: String) { tokens[server] = nil }
 }

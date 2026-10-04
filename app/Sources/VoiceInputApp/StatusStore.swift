@@ -17,6 +17,8 @@ final class StatusStore: ObservableObject {
     @Published private(set) var retryURL: URL?
     @Published private(set) var legacyPending = LegacyMigration.needed
     @Published private(set) var updateVersion: String?
+    @Published private(set) var credentialNeedsApproval = false
+    @Published private(set) var credentialLoading = false
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
     @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
     private let hotkeys = NativeHotkeys()
@@ -28,10 +30,13 @@ final class StatusStore: ObservableObject {
     private var pairTask: Task<Void, Never>?
     private var uploadTask: Task<Void, Never>?
     private var learningTask: Task<Void, Never>?
+    private var credentialTask: Task<Void, Never>?
+    private var credentialOperation = UUID()
+    private let credentials = CredentialCache()
     private var started = false
     private var legacyReloadPending = false
     private var operation = UUID()
-    var client: SparkClient { SparkClient(base: server, token: DeviceCredential.load(server: server)) }
+    var client: SparkClient { SparkClient(base: server, token: credentials.token(for: server)) }
     var ready: Bool { status.paired && status.microphoneGranted && status.nativeHotkeysRunning && status.serverReachable == true && status.whisperReady == true && !legacyPending && !legacyReloadPending }
     var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
 
@@ -71,10 +76,12 @@ final class StatusStore: ObservableObject {
             Task { @MainActor in await self?.refreshRemote() }
         }
         refreshNow()
+        loadAccountCredential()
     }
     func stop() {
         localTimer?.invalidate(); remoteTimer?.invalidate(); hotkeys.stop()
         pairTask?.cancel(); uploadTask?.cancel(); learningTask?.cancel()
+        credentialTask?.cancel()
         if status.phase == .recording { recorder?.cancel() }
     }
     func showPanel() {
@@ -111,7 +118,30 @@ final class StatusStore: ObservableObject {
         pairTask?.cancel(); pairCode = nil; server = clean; UserDefaults.standard.set(clean, forKey: "server")
         accountName = nil; status.paired = false; status.history = []; words = []
         status.serverReachable = nil; status.whisperReady = nil; refreshNow()
+        loadAccountCredential()
     }
+    private func loadAccountCredential(allowInteraction: Bool = false) {
+        credentialTask?.cancel()
+        let origin = server
+        let operation = UUID(); credentialOperation = operation
+        credentialNeedsApproval = false; credentialLoading = true
+        credentialTask = Task {
+            defer { if operation == credentialOperation { credentialLoading = false } }
+            do {
+                try await credentials.load(server: origin, allowInteraction: allowInteraction)
+                try Task.checkCancellation()
+                guard origin == server, operation == credentialOperation else { return }
+                credentialNeedsApproval = false
+                await refreshRemote()
+            } catch is CancellationError { }
+            catch {
+                guard origin == server, operation == credentialOperation, !Task.isCancelled else { return }
+                credentialNeedsApproval = true
+                message = error.localizedDescription
+            }
+        }
+    }
+    func restoreAccountAccess() { loadAccountCredential(allowInteraction: true) }
     func configureHotkey(_ enabled: Bool) { doubleControl = enabled; UserDefaults.standard.set(enabled, forKey: "doubleControl") }
     func configureShortcut(_ value: RecordingShortcut) { shortcut = value; hotkeys.shortcut = value; UserDefaults.standard.set(value.rawValue, forKey: "recordingShortcut") }
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -161,7 +191,10 @@ final class StatusStore: ObservableObject {
                     let result = try await origin.request("/api/pair/exchange", json: ["device_code": pairing.deviceCode])
                     if let token = result["token"] as? String {
                         try Task.checkCancellation()
-                        try DeviceCredential.save(token, server: origin.base)
+                        try await credentials.save(token, server: origin.base)
+                        try Task.checkCancellation()
+                        guard origin.base == server else { return }
+                        credentialNeedsApproval = false
                         pairCode = nil; message = "已配對這台 Mac"; await refreshRemote(); return
                     }
                 }
@@ -182,10 +215,12 @@ final class StatusStore: ObservableObject {
     }
     func refreshNow() { refreshPermissions(); Task { await refreshRemote() } }
     private func refreshRemote() async {
-        let c = client
-        let health = await c.health()
-        guard c.base == server else { return }
+        let origin = server
+        // Network readiness does not wait for Keychain approval or account access.
+        let health = await SparkClient(base: origin).health()
+        guard origin == server else { return }
         status.serverReachable = health != nil; status.whisperReady = health?.whisperReady; status.threshold = health?.threshold; status.serverCheckedAt = Date()
+        let c = client
         if c.token != nil && health != nil {
             do {
                 let me = try await c.request("/api/me")
@@ -195,10 +230,14 @@ final class StatusStore: ObservableObject {
                 guard c.base == server else { return }
                 status.history = history
                 await refreshVocab()
-            } catch SparkClient.Failure.unauthorized { accountName = nil; status.paired = false; status.history = []; words = []; message = "配對已失效，請重新配對" }
-            catch { message = error.localizedDescription }
+            } catch SparkClient.Failure.unauthorized {
+                guard c.base == server, c.token == credentials.token(for: server) else { return }
+                credentials.clear(server: c.base); accountName = nil; status.paired = false; status.history = []; words = []; message = "配對已失效，請重新配對"
+            }
+            catch { if c.base == server { message = error.localizedDescription } }
         } else if c.token == nil { status.paired = false; accountName = nil; status.history = []; words = [] }
         if let result = try? await c.request("/api/releases"), let entries = result["items"] as? [[String: Any]], let mac = entries.first(where: { $0["platform"] as? String == "mac" }) {
+            guard c.base == server else { return }
             let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
             if let version = mac["version"] as? String, version.compare(current, options: .numeric) == .orderedDescending { updateVersion = version }
         }
@@ -258,7 +297,12 @@ final class StatusStore: ObservableObject {
     }
     func copyLast() { if let text = status.last?.text { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); message = "已複製" } }
     func setThreshold(_ value: Double?) { status.localThreshold = value; if let value { UserDefaults.standard.set(value, forKey: "nativeThreshold") } else { UserDefaults.standard.set(-1.0, forKey: "nativeThreshold"); status.localThreshold = nil } }
-    func refreshVocab() async { if let d = try? await client.request("/api/vocab") { words = d["words"] as? [String] ?? [] } }
+    func refreshVocab() async {
+        let c = client
+        if let d = try? await c.request("/api/vocab"), c.base == server, c.token == credentials.token(for: server) {
+            words = d["words"] as? [String] ?? []
+        }
+    }
     func addWord(_ word: String) { Task { do { _ = try await client.request("/api/vocab", json: ["word": word]); await refreshVocab() } catch { message = error.localizedDescription } } }
     func removeWord(_ word: String) { Task { do { _ = try await client.request("/api/vocab/remove", json: ["word": word]); await refreshVocab() } catch { message = error.localizedDescription } } }
     func learn(original: String, edited: String) { guard let candidate = LearningCandidate.diff(original, edited) else { message = "請選一個短詞的修改，避免整句改寫"; return }; learning = candidate; renderIsland() }
