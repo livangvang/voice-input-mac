@@ -27,7 +27,7 @@ enum Phase: String {
 ///
 /// 那個字串**從來就不是設計成 API 的**，所以一定要保留 `raw`：
 /// 格式哪天改了，畫面要退化成「還看得懂」，不是變成空白。
-struct Gate {
+struct Gate: Equatable {
     var usesVoiceDetection: Bool { raw.hasPrefix("gate: vad") }
     let raw: String
     let p95: Double?
@@ -65,7 +65,7 @@ struct Gate {
 }
 
 /// 最後一次辨識的結果。
-struct LastResult {
+struct LastResult: Equatable {
     enum Kind {
         case ok          // 辨識成功
         case skipped     // 被能量閘門擋下
@@ -82,7 +82,7 @@ struct LastResult {
 }
 
 /// App 畫面上的全部狀態。一次算好整包再換上去，避免各欄位來自不同時間點。
-struct AppStatus {
+struct AppStatus: Equatable {
     var phase: Phase = .idle
     var recordingSince: Date?
     var last: LastResult?
@@ -123,7 +123,7 @@ struct AppStatus {
     }
 }
 
-struct HistoryItem: Identifiable {
+struct HistoryItem: Identifiable, Equatable {
     let id = UUID()
     let time: String
     let text: String

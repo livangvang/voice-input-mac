@@ -123,14 +123,22 @@ final class StatusStore: ObservableObject {
             window.makeKeyAndOrderFront(nil)
         }
     }
+    // 每 0.5 秒跑一次，但**只有真的變了才寫回 status**。
+    //
+    // status 是 @Published：寫進去就會通知 SwiftUI 重畫整個面板，即使值一模一樣。
+    // 原本每次都寫，面板就以每秒兩次的頻率重建 display list，而 AppKit 的
+    // KVO 相依物件會一路累積——實測連續開 2 天長到 1.2 GB（光 NSKeyValueDependency
+    // 就 86 萬個），CPU 也一直吃 11%。改成比較過才寫，待機時完全不發通知。
     private func refreshPermissions() {
-        status.accessibilityGranted = AXIsProcessTrusted()
-        status.microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        var next = status
+        next.accessibilityGranted = AXIsProcessTrusted()
+        next.microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         hotkeys.doubleControl = doubleControl
         hotkeys.shortcut = shortcut
-        if status.accessibilityGranted == true && !legacyPending && !legacyReloadPending {
-            status.nativeHotkeysRunning = hotkeys.start()
-        } else { hotkeys.stop(); status.nativeHotkeysRunning = false }
+        if next.accessibilityGranted == true && !legacyPending && !legacyReloadPending {
+            next.nativeHotkeysRunning = hotkeys.start()
+        } else { hotkeys.stop(); next.nativeHotkeysRunning = false }
+        if next != status { status = next }
         AppIcon.apply(status)
     }
     func requestMicrophone() {
