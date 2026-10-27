@@ -132,8 +132,9 @@ button.primary { border-color: var(--orange); }
 .more > summary::-webkit-details-marker { display: none; }
 
 /* ── 詞彙 TAG ──
-   一個詞一顆 TAG，自動換行排滿。順序就是優先順序（左上最優先）。
-   沒生效的是虛線灰色；點 TAG 本身＝移到最前面，右邊的 ✕＝刪除（5 秒內可復原）。 */
+   一個詞一顆 TAG，自動換行排滿。全部一個樣：整份詞彙表在辨識完都會拿來比對，
+   沒有「有效／無效」之分。順序只影響 whisper 第一遍先看到誰（左上最優先）。
+   點 TAG 本身＝移到最前面，右邊的 ✕＝刪除（5 秒內可復原）。 */
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 320px; overflow-y: auto; }
 .tag {
   display: inline-flex; align-items: center; border: 1px solid var(--steel);
@@ -142,10 +143,6 @@ button.primary { border-color: var(--orange); }
 .tag .w { padding: 1px 4px 1px 8px; cursor: pointer; word-break: break-all; }
 .tag .x { padding: 1px 8px; cursor: pointer; color: var(--dim); border-left: 1px solid var(--line); }
 .tag .x:hover { color: var(--orange); }
-.tag.off { border-style: dashed; border-color: var(--line); }
-.tag.off .w { color: var(--steel); }
-.tag.off .w:hover { color: var(--fg); }
-.tags .cut { flex-basis: 100%; font-size: 15px; color: var(--orange); margin-top: 4px; }
 .vempty { font-size: 16px; color: var(--steel); padding: 8px 0; }
 .undo { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 16px; color: var(--dim); }
 
@@ -237,9 +234,8 @@ input[type=text] {
     <div class="tags" id="vlist"><div class="vempty">讀取中…</div></div>
     <div class="opt">
       <div class="name" style="color:var(--steel);font-size: 16px">
-        詞要存幾個都可以，但 whisper 一次只吃得下前面幾十個。
-        實線的有生效，虛線的存著但沒生效——點一下 TAG 就移到最前面，它就生效了。
-        這是你自己的詞彙表，改完下一句就生效。
+        這是你自己的詞彙表，要存幾個都可以，每個詞都會用到，改完下一句就有效。
+        排在前面的詞 whisper 會先看到；常講的詞點一下 TAG 就移到最前面。
       </div>
     </div>
   </div>
@@ -364,13 +360,12 @@ function renderVocabList(force) {
     $('vlist').innerHTML = '<div class="vempty">還沒有詞</div>';
     return;
   }
-  const tag = (w, off) =>
-    '<span class="tag' + (off ? ' off' : '') + '" data-w="' + esc(w) + '">' +
-      '<span class="w" title="' + (off ? '沒生效 · 點一下移到最前面' : '點一下移到最前面') + '">' + esc(w) + '</span>' +
+  // used／dropped 只是 whisper 第一遍拿不拿得到；辨識完整份都會比對，所以畫面上不分。
+  const tag = w =>
+    '<span class="tag" data-w="' + esc(w) + '">' +
+      '<span class="w" title="點一下移到最前面">' + esc(w) + '</span>' +
       '<span class="x" title="刪除">✕</span></span>';
-  $('vlist').innerHTML = used.map(w => tag(w, false)).join('') +
-    (dropped.length ? '<div class="cut">以下 ' + dropped.length + ' 個沒生效</div>' : '') +
-    dropped.map(w => tag(w, true)).join('');
+  $('vlist').innerHTML = used.concat(dropped).map(tag).join('');
 }
 
 function commitDelete() {

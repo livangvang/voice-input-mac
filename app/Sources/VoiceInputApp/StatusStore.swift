@@ -30,6 +30,14 @@ final class StatusStore: ObservableObject {
     private let hotkeys = NativeHotkeys()
     private let recordingSounds = RecordingSounds()
     private var recorder: NativeRecorder?
+    /// 按下停止之後還在錄的那一小段（見 finishRecording）。期間再按一次停止不重複處理。
+    private var stopping = false
+    /// 按停止後多錄多久才真的關麥克風。
+    ///
+    /// 舊版（Hammerspoon → shell → sox）從按鍵到真的停錄本來就慢 0.2～0.4 秒，剛好把最後一個字錄進去；
+    /// 原生 App 一按就關，麥克風緩衝裡的最後一個字被丟掉——「安裝說明」變成「安張說」。
+    /// 實測（伺服器紀錄）：換原生 App 後「馬上重講」的比例從 1.0% 升到 2.8%。
+    static let stopTail: Duration = .milliseconds(400)
     private var target: NativePaste.Target?
     private var island: FloatingIsland?
     private var fallbackPanel: NSWindow?
@@ -305,7 +313,19 @@ final class StatusStore: ObservableObject {
         } catch { recorder.cancel(); message = error.localizedDescription; VoiceDiagnostics.record(.recordingFailed); notify(.microphone) }
     }
     func finishRecording() {
-        guard status.phase == .recording, let recorder else { return }
+        guard status.phase == .recording, let recorder, !stopping else { return }
+        stopping = true
+        // 先多錄 stopTail 再關。結束提示音放在關掉之後才播，不然會被錄進去。
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.stopTail)
+            guard let self else { return }
+            self.stopping = false
+            // 這段時間裡被取消（Esc）或換了一次錄音，就什麼都不做
+            guard self.recorder === recorder, self.status.phase == .recording else { return }
+            self.stopNow(recorder)
+        }
+    }
+    private func stopNow(_ recorder: NativeRecorder) {
         defer { recordingSounds.play(.finish) }
         do { let url = try recorder.stop(); self.recorder = nil; VoiceDiagnostics.record(.recordingStopped); upload(url, target: target) }
         catch {
@@ -318,6 +338,7 @@ final class StatusStore: ObservableObject {
     }
     func cancelRecording() {
         guard status.phase == .recording else { return }
+        stopping = false
         operation = UUID(); recorder?.cancel(); recorder = nil; status.phase = .idle; status.recordingSince = nil
         message = "已取消，沒有送出辨識"; renderIsland()
     }
