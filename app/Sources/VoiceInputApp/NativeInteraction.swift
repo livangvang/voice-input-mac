@@ -114,25 +114,18 @@ enum NativePaste {
               let text = value as? String, text.count < 20_000 else { return nil }
         return text
     }
-    static func paste(_ text: String, to target: Target) -> Bool {
-        guard sameFocus(target, requireSelection: true) else { return false }
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else { return false }
-        let board = NSPasteboard.general
-        let old = (board.pasteboardItems ?? []).map { item -> NSPasteboardItem in
-            let copy = NSPasteboardItem()
-            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
-            return copy
-        }
-        board.clearContents(); board.setString(text, forType: .string)
-        let count = board.changeCount
-        down.flags = .maskCommand; up.flags = .maskCommand
-        let stillFocused = sameFocus(target, requireSelection: true)
-        if stillFocused { down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap) }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            if board.changeCount == count { board.clearContents(); if !old.isEmpty { board.writeObjects(old) } }
-        }
-        return stillFocused
+    // 下面三個數字都是舊版（bin/voice-input-mac.sh 的 emit／send_cmd_v）踩過才定下來的，
+    // 原生 App 改寫時漏掉了，症狀是「辨識好了、文字也在剪貼簿，但輸入框沒東西」。
+    /// 送 Cmd+V 前最多等使用者放開修飾鍵多久。停止錄音是按 Ctrl，還沒放開就送出去會變成 Ctrl+Cmd+V。
+    static let modifierWait: Duration = .milliseconds(1500)
+    /// 按下和放開之間的間隔。完全沒間隔的話，部分 App 會把這組事件當雜訊丟掉。
+    static let keyGap: Duration = .milliseconds(10)
+    /// 輸入框一直沒來讀剪貼簿時，最晚多久還原（正常情況讀走就還，見 NativeInsert.swift）。
+    static let restoreDelay: Duration = .seconds(5)
+
+    static func modifiersHeld() -> Bool {
+        let held: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
+        return !CGEventSource.flagsState(.combinedSessionState).intersection(held).isEmpty
     }
+
 }

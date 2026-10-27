@@ -32,12 +32,12 @@ final class StatusStore: ObservableObject {
     private var recorder: NativeRecorder?
     /// 按下停止之後還在錄的那一小段（見 finishRecording）。期間再按一次停止不重複處理。
     private var stopping = false
-    /// 按停止後多錄多久才真的關麥克風。
+    /// 按停止後多錄多久才真的關麥克風（使用者試用後 0.4 → 0.3 → 0.1 秒；最後一個字又被切掉的話調回 0.3）。
     ///
     /// 舊版（Hammerspoon → shell → sox）從按鍵到真的停錄本來就慢 0.2～0.4 秒，剛好把最後一個字錄進去；
     /// 原生 App 一按就關，麥克風緩衝裡的最後一個字被丟掉——「安裝說明」變成「安張說」。
     /// 實測（伺服器紀錄）：換原生 App 後「馬上重講」的比例從 1.0% 升到 2.8%。
-    static let stopTail: Duration = .milliseconds(400)
+    static let stopTail: Duration = .milliseconds(100)
     private var target: NativePaste.Target?
     private var island: FloatingIsland?
     private var fallbackPanel: NSWindow?
@@ -386,7 +386,7 @@ final class StatusStore: ObservableObject {
                 status.last = LastResult(kind: outcome.succeeded ? .ok : .skipped, text: outcome.text, seconds: result["seconds"] as? Double, reason: outcome.reason, gate: outcome.gate, at: Date())
                 if let text = outcome.text {
                     VoiceDiagnostics.record(.textReady, count: text.count, confirmed: speechConfirmed)
-                    if let target, NativePaste.paste(text, to: target) {
+                    if let target, await NativePaste.deliver(text, to: target) {
                         message = "已輸入"; monitorEdits(target, inserted: text)
                         VoiceDiagnostics.record(.pasteSent)
                     } else {
