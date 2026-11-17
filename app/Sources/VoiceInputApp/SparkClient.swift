@@ -75,7 +75,8 @@ struct SparkClient {
         guard let obj = try? await request("/api/history"), let rows = obj["items"] as? [[String: Any]] else { return [] }
         return rows.prefix(limit).map { row in
             let ts = row["ts"] as? String ?? ""
-            return HistoryItem(time: ts.count >= 16 ? String(ts.dropFirst(11).prefix(5)) : "", text: row["text"] as? String ?? "", fromWeb: (row["src"] as? String ?? "").hasPrefix("web"))
+            let text = row["text"] as? String ?? ""
+            return HistoryItem(id: ts + "|" + text, time: ts.count >= 16 ? String(ts.dropFirst(11).prefix(5)) : "", text: text, fromWeb: (row["src"] as? String ?? "").hasPrefix("web"))
         }
     }
 }

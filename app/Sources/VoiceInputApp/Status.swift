@@ -97,7 +97,6 @@ struct AppStatus: Equatable {
     var threshold: Double?            // Spark 的全域門檻
     var usesVoiceDetection = false
     var localThreshold: Double?       // 這台 Mac 自己的門檻；nil = 跟著全域值
-    var serverCheckedAt: Date?
 
     var history: [HistoryItem] = []
 
@@ -124,7 +123,11 @@ struct AppStatus: Equatable {
 }
 
 struct HistoryItem: Identifiable, Equatable {
-    let id = UUID()
+    /// 用伺服器的時間戳＋內容當 id，**不能用 UUID()**。
+    /// 每 15 秒重抓一次歷史；id 每次都換的話，SwiftUI 會把整串列表當成全新的，
+    /// 每一列的可選取文字框（SelectionTextField）都重建，舊的又收不乾淨——
+    /// 實測連開 14 小時累積 2.8 萬個、記憶體 2.1 GB、CPU 99%。
+    let id: String
     let time: String
     let text: String
     let fromWeb: Bool

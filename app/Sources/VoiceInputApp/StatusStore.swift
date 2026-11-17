@@ -314,18 +314,24 @@ final class StatusStore: ObservableObject {
         // Network readiness does not wait for Keychain approval or account access.
         let health = await SparkClient(base: origin).health()
         guard origin == server else { return }
-        microphoneName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "系統預設麥克風"
-        status.serverReachable = health != nil; status.whisperReady = health?.whisperReady; status.threshold = health?.threshold
-        status.usesVoiceDetection = health?.speechGate == "vad"; status.serverCheckedAt = Date()
+        let mic = AVCaptureDevice.default(for: .audio)?.localizedName ?? "系統預設麥克風"
+        if mic != microphoneName { microphoneName = mic }
+        // 跟 refreshPermissions 一樣：比較過才寫回。每 15 秒無條件寫一次就會讓面板整個重畫。
+        var next = status
+        next.serverReachable = health != nil; next.whisperReady = health?.whisperReady; next.threshold = health?.threshold
+        next.usesVoiceDetection = health?.speechGate == "vad"
+        if next != status { status = next }
         let c = client
         if c.token != nil && health != nil {
             do {
                 let me = try await c.request("/api/me")
                 guard c.base == server else { return }
-                accountName = me["email"] as? String ?? me["name"] as? String; status.paired = accountName != nil
+                let name = me["email"] as? String ?? me["name"] as? String
+                if name != accountName { accountName = name }
+                if status.paired != (name != nil) { status.paired = name != nil }
                 let history = await c.history()
                 guard c.base == server else { return }
-                status.history = history
+                if history != status.history { status.history = history }
                 await refreshVocab()
             } catch SparkClient.Failure.unauthorized {
                 guard c.base == server, c.token == credentials.token(for: server) else { return }
@@ -336,7 +342,7 @@ final class StatusStore: ObservableObject {
         if let result = try? await c.request("/api/releases"), let entries = result["items"] as? [[String: Any]], let mac = entries.first(where: { $0["platform"] as? String == "mac" }) {
             guard c.base == server else { return }
             let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-            if let version = mac["version"] as? String, version.compare(current, options: .numeric) == .orderedDescending { updateVersion = version }
+            if let version = mac["version"] as? String, version.compare(current, options: .numeric) == .orderedDescending, version != updateVersion { updateVersion = version }
         }
         AppIcon.apply(status)
     }
@@ -443,7 +449,7 @@ final class StatusStore: ObservableObject {
                     Task {
                         let history = await c.history()
                         guard c.base == server, c.token == credentials.token(for: server) else { return }
-                        status.history = history
+                        if history != status.history { status.history = history }
                     }
                 } else {
                     canRetryConfirmedSpeech = outcome.canRetryConfirmedSpeech
@@ -464,7 +470,8 @@ final class StatusStore: ObservableObject {
     func refreshVocab() async {
         let c = client
         if let d = try? await c.request("/api/vocab"), c.base == server, c.token == credentials.token(for: server) {
-            words = d["words"] as? [String] ?? []
+            let next = d["words"] as? [String] ?? []
+            if next != words { words = next }
         }
     }
     func addWord(_ word: String) { Task { do { _ = try await client.request("/api/vocab", json: ["word": word]); await refreshVocab() } catch { message = error.localizedDescription } } }
