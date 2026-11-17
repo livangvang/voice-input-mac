@@ -4,7 +4,7 @@ import SwiftUI
 @main
 struct VoiceInputApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var store = StatusStore()
+    @StateObject private var store = StatusStore.shared
 
     var body: some Scene {
         Window("超簡單語音輸入", id: "main") {
@@ -15,11 +15,24 @@ struct VoiceInputApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) { }   // 這個 App 沒有「新增」的概念
+            CommandGroup(replacing: .appSettings) {
+                Button("設定…") { store.showPanel(page: .settings) }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .toolbar) {
                 Button("立即重新整理") { store.refreshNow() }
                     .keyboardShortcut("r", modifiers: .command)
             }
         }
+        MenuBarExtra("超簡單語音輸入", systemImage: store.status.phase == .recording ? "mic.fill" : "waveform") {
+            Button("開啟面板") { store.showPanel() }
+            Button(store.status.phase == .recording ? "結束並辨識" : "開始錄音") { store.toggleRecording() }
+            Button("取消錄音") { store.cancelRecording() }.disabled(store.status.phase != .recording)
+            Divider()
+            Button("設定…") { store.showPanel(page: .settings) }
+            Button("結束 App") { NSApp.terminate(nil) }
+        }
+
     }
 }
 
@@ -35,15 +48,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 點 Dock 圖示時把視窗叫回來。沒有這段，視窗關掉之後就再也開不出來了。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            for window in sender.windows where window.canBecomeMain {
-                window.makeKeyAndOrderFront(nil)
-                return true
-            }
+            StatusStore.shared.showPanel()
         }
         return true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let id = Bundle.main.bundleIdentifier, let other = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: { $0.processIdentifier != getpid() }) {
+            other.activate(options: [.activateAllWindows]); NSApp.terminate(nil); return
+        }
         NSApp.setActivationPolicy(.regular)   // 確保出現在 Dock 與 Cmd+Tab
+        // Recording, shortcuts and account loading must also start for login/background launches.
+        StatusStore.shared.start()
     }
 }

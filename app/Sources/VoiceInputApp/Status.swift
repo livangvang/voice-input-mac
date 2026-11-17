@@ -27,7 +27,8 @@ enum Phase: String {
 ///
 /// 那個字串**從來就不是設計成 API 的**，所以一定要保留 `raw`：
 /// 格式哪天改了，畫面要退化成「還看得懂」，不是變成空白。
-struct Gate {
+struct Gate: Equatable {
+    var usesVoiceDetection: Bool { raw.hasPrefix("gate: vad") }
     let raw: String
     let p95: Double?
     let median: Double?
@@ -64,7 +65,7 @@ struct Gate {
 }
 
 /// 最後一次辨識的結果。
-struct LastResult {
+struct LastResult: Equatable {
     enum Kind {
         case ok          // 辨識成功
         case skipped     // 被能量閘門擋下
@@ -81,19 +82,21 @@ struct LastResult {
 }
 
 /// App 畫面上的全部狀態。一次算好整包再換上去，避免各欄位來自不同時間點。
-struct AppStatus {
+struct AppStatus: Equatable {
     var phase: Phase = .idle
     var recordingSince: Date?
     var last: LastResult?
 
-    var hammerspoonRunning = false
+    var nativeHotkeysRunning = false
+    var microphoneGranted = false
+    var paired = false
     var accessibilityGranted: Bool?   // nil = 問不到（Hammerspoon 沒在跑）
 
     var serverReachable: Bool?        // nil = 還沒測
     var whisperReady: Bool?
     var threshold: Double?            // Spark 的全域門檻
+    var usesVoiceDetection = false
     var localThreshold: Double?       // 這台 Mac 自己的門檻；nil = 跟著全域值
-    var serverCheckedAt: Date?
 
     var history: [HistoryItem] = []
 
@@ -105,7 +108,7 @@ struct AppStatus {
     /// 當成「壞了」——結果權限明明正常，畫面卻紅字寫著「現在按熱鍵不會有反應」，
     /// 使用者跑去改一個根本沒壞的設定。查不到就說查不到。
     var hotkeyState: HotkeyState {
-        if !hammerspoonRunning { return .broken }   // 沒在跑是確定的事實，不必猜
+        if !nativeHotkeysRunning { return .broken }   // 沒在跑是確定的事實，不必猜
         switch accessibilityGranted {
         case .some(true): return .working
         case .some(false): return .broken
@@ -119,8 +122,12 @@ struct AppStatus {
     }
 }
 
-struct HistoryItem: Identifiable {
-    let id = UUID()
+struct HistoryItem: Identifiable, Equatable {
+    /// 用伺服器的時間戳＋內容當 id，**不能用 UUID()**。
+    /// 每 15 秒重抓一次歷史；id 每次都換的話，SwiftUI 會把整串列表當成全新的，
+    /// 每一列的可選取文字框（SelectionTextField）都重建，舊的又收不乾淨——
+    /// 實測連開 14 小時累積 2.8 萬個、記憶體 2.1 GB、CPU 99%。
+    let id: String
     let time: String
     let text: String
     let fromWeb: Bool

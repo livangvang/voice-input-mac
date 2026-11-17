@@ -11,6 +11,8 @@ struct CheckRow: View {
     let detail: String
     let state: State
     let action: (String, () -> Void)?
+    var titleSize: CGFloat = 13
+    var detailSize: CGFloat = 11
 
     private var color: Color {
         switch state {
@@ -26,10 +28,10 @@ struct CheckRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: titleSize, weight: .medium))
                     .foregroundStyle(Theme.fg)
                 Text(detail)
-                    .font(.system(size: 11))
+                    .font(.system(size: detailSize))
                     .foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -39,7 +41,7 @@ struct CheckRow: View {
             if let action {
                 Button(action.0, action: action.1)
                     .buttonStyle(.borderless)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: detailSize, weight: .medium))
                     .foregroundStyle(Theme.accent)
             }
         }
@@ -77,7 +79,8 @@ struct LastResultCard: View {
                 .textSelection(.enabled)
 
             if let gate = result.gate {
-                GateMeter(gate: gate)
+                if gate.usesVoiceDetection { Text("人聲自動判定").font(.caption).foregroundStyle(Theme.dim) }
+                else { GateMeter(gate: gate) }
             }
         }
         .padding(14)
@@ -88,7 +91,7 @@ struct LastResultCard: View {
     private var headline: String {
         switch result.kind {
         case .ok: return "上一句"
-        case .skipped: return "被閘門擋下"
+        case .skipped: return "沒有可輸入的文字"
         case .error: return "錯誤"
         case .note: return "本地狀況"
         }

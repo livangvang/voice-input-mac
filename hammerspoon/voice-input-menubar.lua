@@ -90,7 +90,9 @@ end
 -- 詞彙表在 Spark 上，這裡只負責問和顯示；寫檔都在伺服器那邊做。
 --
 -- 2026-09-18 起每個人只有自己一份（共用詞彙表停用），全部帶 X-Voice-User。
--- 個人詞是逐請求帶進提示詞的，改完下一句就生效，不用重啟任何服務。
+-- 個人詞是逐請求帶進提示詞的，改完下一句就有效，不用重啟任何服務。
+-- 伺服器在辨識完還會拿整份詞彙表做讀音比對（沒有數量上限），所以 used／dropped
+-- 只是「whisper 第一遍拿不拿得到」，面板上不再分成有效／無效兩種。
 --
 -- 用 hs.http 而不是 hs.task 跑 curl：README 那條「hs.task 會凍結事件迴圈」的坑
 -- 至今原因未明，純 Lua 的 hs.http 不 fork，不必去碰那顆地雷。
@@ -104,13 +106,13 @@ local function vocabRefresh()
     hs.http.asyncGet(core.server() .. "/api/vocab", {["X-Voice-User"] = core.user()}, function(code, body)
         local ok, data = pcall(hs.json.decode, body or "")
         if code == 200 and ok and type(data) == "table" and type(data.personal) == "table" then
-            -- 檔案順序＝ used 接 dropped（放不下的從尾巴砍，見 build-prompt.py）
+            -- 檔案順序＝ used 接 dropped（whisper 提示詞放不下的從尾巴砍，見 build-prompt.py）
             local used, dropped = listOf(data.personal.used), listOf(data.personal.dropped)
             vocab.used, vocab.dropped = used, dropped
             if #used + #dropped == 0 then
-                vocab.summary = "還沒有詞。加進來的詞下一句就生效。"
+                vocab.summary = "還沒有詞。加進來的詞下一句就有效。"
             else
-                vocab.summary = string.format("%d 個詞，前 %d 個有生效", #used + #dropped, #used)
+                vocab.summary = string.format("%d 個詞，每個都會用到", #used + #dropped)
             end
         else
             vocab.summary = "讀不到詞彙表（HTTP " .. tostring(code) .. "）"
@@ -125,7 +127,7 @@ local function vocabError(prefix, code, ok, data)
     return "❌ " .. prefix .. err
 end
 
--- 加完詞要講兩件事：這個詞有沒有生效、它把誰擠到沒生效。
+-- 加完詞只講一件事：加進去了沒。effective／pushed_out 只關 whisper 第一遍，不拿出來嚇人。
 local function vocabAdd(word)
     vocab.msg = "加入中…"
     M.render()
@@ -137,14 +139,8 @@ local function vocabAdd(word)
                 local lines = {}
                 if not data.added then
                     lines[#lines + 1] = "「" .. word .. "」本來就在裡面了"
-                elseif data.effective then
-                    lines[#lines + 1] = "✅ 已加入「" .. word .. "」，下一句就生效"
                 else
-                    lines[#lines + 1] = "⚠️ 已加入「" .. word .. "」，但放不下，還沒生效"
-                end
-                local out = listOf(data.pushed_out)
-                if #out > 0 then
-                    lines[#lines + 1] = "變成沒生效的詞：" .. table.concat(out, "、")
+                    lines[#lines + 1] = "✅ 已加入「" .. word .. "」，下一句就有效"
                 end
                 vocab.msg = table.concat(lines, "\n")
             else
@@ -166,7 +162,7 @@ local function vocabEdit(op, word, direction)
                 if data.result == "removed" then
                     vocab.msg = "🗑 已刪除「" .. word .. "」"
                 elseif data.result == "moved" then
-                    vocab.msg = "已把「" .. word .. "」移到最前面" .. (data.effective and "，✅ 有生效" or "")
+                    vocab.msg = "已把「" .. word .. "」移到最前面"
                 else
                     vocab.msg = ""
                 end
@@ -209,7 +205,7 @@ local function learnSave(bad, good, reply)
             if code == 200 and ok and type(data) == "table" and data.ok then
                 local msg = data.action == "exists"
                     and ("「" .. data.bad .. " → " .. data.good .. "」本來就在你的校正表裡了")
-                    or ("✅ 已存「" .. data.bad .. " → " .. data.good .. "」，下一句就生效")
+                    or ("✅ 已存「" .. data.bad .. " → " .. data.good .. "」，下一句就有效")
                 -- 伺服器會把「對的寫法」順便加進詞彙表（片語、含標點的不加）。
                 -- 第三個參數告訴呼叫端詞彙表有沒有多一個詞；面板開著的話 TAG 也要跟著更新。
                 local v = type(data.vocab) == "table" and data.vocab or nil
