@@ -3,6 +3,8 @@ import SwiftUI
 struct PanelSettingsView: View {
     @EnvironmentObject var store: StatusStore
     @State private var serverInput = ""
+    @State private var emailInput = ""
+    @State private var passwordInput = ""
     private var s: AppStatus { store.status }
 
     var body: some View {
@@ -22,7 +24,7 @@ struct PanelSettingsView: View {
     private var account: some View {
         SettingsSection("帳號與裝置") {
             VStack(alignment: .leading, spacing: 10) {
-                Text(store.accountName ?? "尚未配對這台 Mac").font(.system(size: 17, weight: .medium))
+                Text(store.accountName ?? "尚未登入").font(.system(size: 17, weight: .medium))
                 if store.credentialLoading { SettingsHelp("正在讀取這台電腦的帳號憑證…") }
                 if store.credentialNeedsApproval {
                     SettingsHelp("更新後需要重新允許 App 存取 Keychain 裡的帳號。伺服器連線仍可獨立檢查。")
@@ -30,18 +32,32 @@ struct PanelSettingsView: View {
                 }
                 if s.paired {
                     Button("管理帳號與裝置") { store.openWebVersion() }
+                    Button("登出這台電腦") { store.logoutAccount() }
+                        .disabled(store.accountOperationInProgress)
                 } else {
-                    Button(store.pairCode == nil ? "連結我的帳號" : "再次開啟確認頁") { store.linkAccount() }
-                    SettingsHelp("網頁會自動帶入這台 Mac。確認帳號與電腦，按「允許連結」即可，不必複製配對碼。")
-                    if let code = store.pairCode {
-                        DisclosureGroup("手動連結（需要時使用）") {
-                            Text(code).font(.system(.title, design: .monospaced)).textSelection(.enabled)
-                            SettingsHelp("若帳號在另一個瀏覽器登入，請回到該瀏覽器的帳號頁使用這組碼。十分鐘內有效。")
-                        }
+                    TextField("Email", text: $emailInput)
+                        .textContentType(.username)
+                        .autocorrectionDisabled()
+                    SecureField("密碼（12–128 個字元）", text: $passwordInput)
+                        .textContentType(.password)
+                    HStack {
+                        Button("登入") { submitAccount(createAccount: false) }
+                        Button("建立新帳號") { submitAccount(createAccount: true) }
                     }
+                    .disabled(store.accountOperationInProgress || emailInput.isEmpty || passwordInput.isEmpty)
+                    if store.accountOperationInProgress { SettingsHelp("正在安全登入…") }
+                    SettingsHelp("在已連線 Tailscale 的電腦上，使用同一組 Email 和密碼登入。新帳號會自動建立。")
+                    SettingsHelp("忘記密碼時，請聯絡伺服器管理者重設。")
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func submitAccount(createAccount: Bool) {
+        let email = emailInput
+        let password = passwordInput
+        passwordInput = ""
+        store.authenticateAccount(email: email, password: password, createAccount: createAccount)
     }
 
     private var computer: some View {

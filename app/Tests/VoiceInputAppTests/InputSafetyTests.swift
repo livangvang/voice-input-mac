@@ -10,6 +10,7 @@ private actor DelayedCredentials: CredentialStorage {
         return "synthetic-device-token"
     }
     func save(_ token: String, server: String) async throws {}
+    func delete(server: String) async throws {}
 }
 
 final class InputSafetyTests: XCTestCase {
@@ -42,7 +43,7 @@ final class InputSafetyTests: XCTestCase {
         try await loading.value
         XCTAssertEqual(credentials.token(for: "https://one.example"), "synthetic-device-token")
         XCTAssertNil(credentials.token(for: "https://two.example"))
-        credentials.clear(server: "https://one.example")
+        try await credentials.remove(server: "https://one.example")
         XCTAssertNil(credentials.token(for: "https://one.example"))
     }
 

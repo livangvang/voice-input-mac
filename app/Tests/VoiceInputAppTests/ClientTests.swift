@@ -6,7 +6,8 @@ final class ResponseFixture: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let status = request.url!.path == "/revoked" ? 401 : 200
+        let invalidLogin = request.url!.host == "auth-invalid.fixture.example"
+        let status = request.url!.path == "/revoked" || invalidLogin ? 401 : 200
         var response: [String: Any] = status == 401 ? ["error":"revoked"] :
             ["token": request.value(forHTTPHeaderField: "Authorization") ?? "",
              "spoof": request.value(forHTTPHeaderField: "X-Voice-User") ?? "",
@@ -20,6 +21,11 @@ final class ResponseFixture: URLProtocol, @unchecked Sendable {
         if request.url!.path == "/api/pair/start" {
             let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
             response = ["device_code":"synthetic-device-secret", "user_code":body["name"] as? String == "invalid" ? "bad#login=secret" : "ABCD2345"]
+        }
+        if ["/api/auth/login", "/api/auth/register"].contains(request.url!.path) {
+            let body = try! JSONSerialization.jsonObject(with: request.httpBody ?? request.httpBodyStream!.readAll()) as! [String: Any]
+            response = ["token":"synthetic-device-token", "email":body["email"] ?? "", "device_name":body["device_name"] ?? ""]
+            if invalidLogin { response = ["error":"Email 或密碼不正確"] }
         }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: response))
@@ -88,6 +94,30 @@ final class ClientTests: XCTestCase {
         do { _ = try await client().startPairing(name: "invalid"); XCTFail("should reject malformed response") }
         catch SparkClient.Failure.message { }
         catch { XCTFail("wrong error") }
+    }
+    @MainActor
+    func testPasswordLoginAndRegistrationCreateDeviceCredentials() async throws {
+        let c = client()
+        let login = try await c.authenticate(email: "user@example.com", password: "correct horse battery staple",
+                                             createAccount: false, deviceName: "我的 Mac")
+        XCTAssertEqual(login, "synthetic-device-token")
+        let registration = try await c.authenticate(email: "new@example.com", password: "another correct password",
+                                                    createAccount: true, deviceName: "我的 Mac")
+        XCTAssertEqual(registration, "synthetic-device-token")
+    }
+    @MainActor
+    func testInvalidPasswordShowsLoginErrorInsteadOfPairingError() async {
+        var c = client()
+        c = SparkClient(base: "https://auth-invalid.fixture.example", session: c.session)
+        do {
+            _ = try await c.authenticate(email: "user@example.com", password: "wrong password",
+                                         createAccount: false, deviceName: "我的 Mac")
+            XCTFail("invalid password should fail")
+        } catch SparkClient.Failure.message(let message) {
+            XCTAssertEqual(message, "Email 或密碼不正確")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
     }
 }
 

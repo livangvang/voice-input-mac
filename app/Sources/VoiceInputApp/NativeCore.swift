@@ -174,6 +174,7 @@ struct LearningCandidate: Equatable {
 protocol CredentialStorage: Sendable {
     func load(server: String, allowInteraction: Bool) async throws -> String?
     func save(_ token: String, server: String) async throws
+    func delete(server: String) async throws
 }
 
 actor DeviceCredential: CredentialStorage {
@@ -216,6 +217,10 @@ actor DeviceCredential: CredentialStorage {
             guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw CocoaError(.fileWriteNoPermission) }
         } else if result != errSecSuccess { throw CocoaError(.fileWriteNoPermission) }
     }
+    func delete(server: String) throws {
+        let result = SecItemDelete(query(server) as CFDictionary)
+        guard result == errSecSuccess || result == errSecItemNotFound else { throw Failure.unavailable }
+    }
 }
 
 @MainActor
@@ -232,6 +237,10 @@ final class CredentialCache {
     func save(_ token: String, server: String) async throws {
         try await storage.save(token, server: server)
         tokens[server] = token
+    }
+    func remove(server: String) async throws {
+        try await storage.delete(server: server)
+        tokens[server] = nil
     }
     func clear(server: String) { tokens[server] = nil }
 }

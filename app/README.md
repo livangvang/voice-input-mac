@@ -2,7 +2,7 @@
 
 macOS 14+，支援 Apple Silicon 與 Intel。App 使用 AVAudioEngine 收音、原生快捷鍵及 Quartz 貼上；日常操作不需要 Hammerspoon、sox、Homebrew 或 Python。浮動島音柱仍是動畫。
 
-首次使用先連上 Tailscale，從 Spark 的 /download 取得正式安裝包。App 產生配對碼，在 /account 登入後確認。裝置憑證只存 Keychain；詞庫、校正及歷史由伺服器按帳號隔離。
+首次使用先連上 Tailscale，從 Spark 的 /download 取得正式安裝包。在設定輸入 Email 和密碼即可登入；也可直接建立新帳號。其他電腦連上 Tailscale 後輸入相同帳密即可登入同一帳號，共用伺服器上的詞庫、校正及歷史，不必逐台配對。裝置憑證只存該台 Mac 的 Keychain，不會儲存密碼。服務不寄送密碼重設信；既有舊帳號初次設定或忘記密碼請聯絡伺服器管理者。
 
 雙按 Ctrl 開始，單按 Ctrl 結束並辨識，Esc 取消。Ctrl+Option+V 可備援，Ctrl+Option+P 開面板。可關閉雙 Ctrl、選擇開始／結束的快捷鍵，設定登入啟動及本機靈敏度。首次試說需要麥克風及輔助使用授權。
 

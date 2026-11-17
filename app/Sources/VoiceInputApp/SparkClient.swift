@@ -35,7 +35,12 @@ struct SparkClient {
         }
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure.message("伺服器回應格式不正確") }
-        if http.statusCode == 401 { throw Failure.unauthorized }
+        if http.statusCode == 401 {
+            if path == "/api/auth/login" {
+                throw Failure.message(obj["error"] as? String ?? "Email 或密碼不正確")
+            }
+            throw Failure.unauthorized
+        }
         guard (200...299).contains(http.statusCode) else { throw Failure.message(obj["error"] as? String ?? "伺服器暫時無法使用") }
         return obj
     }
@@ -52,6 +57,19 @@ struct SparkClient {
             throw Failure.message("連結資料不完整，請稍後重新按「連結我的帳號」。")
         }
         return Pairing(deviceCode: secret, userCode: code, verificationURL: base + "/account#pair=" + code)
+    }
+    func authenticate(email: String, password: String, createAccount: Bool, deviceName: String) async throws -> String {
+        let path = createAccount ? "/api/auth/register" : "/api/auth/login"
+        let response = try await request(path, json: [
+            "email": email,
+            "password": password,
+            "device_name": deviceName,
+            "platform": "mac"
+        ])
+        guard let token = response["token"] as? String, !token.isEmpty else {
+            throw Failure.message("登入回應不完整，請稍後再試。")
+        }
+        return token
     }
     func history(limit: Int = 12) async -> [HistoryItem] {
         guard let obj = try? await request("/api/history"), let rows = obj["items"] as? [[String: Any]] else { return [] }

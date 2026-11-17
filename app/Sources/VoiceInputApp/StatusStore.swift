@@ -24,6 +24,7 @@ final class StatusStore: ObservableObject {
     @Published private(set) var updateVersion: String?
     @Published private(set) var credentialNeedsApproval = false
     @Published private(set) var credentialLoading = false
+    @Published private(set) var accountOperationInProgress = false
     @Published private(set) var microphoneName = "系統預設麥克風"
     @Published var doubleControl = UserDefaults.standard.object(forKey: "doubleControl") as? Bool ?? true
     @Published private(set) var shortcut = RecordingShortcut(rawValue: UserDefaults.standard.string(forKey: "recordingShortcut") ?? "") ?? .controlOptionV
@@ -193,6 +194,49 @@ final class StatusStore: ObservableObject {
         }
     }
     func restoreAccountAccess() { loadAccountCredential(allowInteraction: true) }
+    func authenticateAccount(email: String, password: String, createAccount: Bool) {
+        guard !accountOperationInProgress else { return }
+        guard status.phase == .idle else { message = "請先結束這次錄音與辨識"; return }
+        accountOperationInProgress = true
+        let origin = server
+        Task {
+            defer { accountOperationInProgress = false }
+            do {
+                let token = try await SparkClient(base: origin).authenticate(
+                    email: email, password: password, createAccount: createAccount,
+                    deviceName: Host.current().localizedName ?? "我的 Mac")
+                guard origin == server else { return }
+                try await credentials.save(token, server: origin)
+                guard origin == server else { return }
+                credentialNeedsApproval = false
+                message = createAccount ? "帳號建立完成，這台 Mac 已登入。" : "登入完成。"
+                await refreshRemote()
+            } catch {
+                if origin == server { message = error.localizedDescription }
+            }
+        }
+    }
+    func logoutAccount() {
+        guard !accountOperationInProgress else { return }
+        guard status.phase == .idle else { message = "請先結束這次錄音與辨識"; return }
+        guard let cToken = credentials.token(for: server) else { return }
+        accountOperationInProgress = true
+        let origin = server
+        let c = SparkClient(base: origin, token: cToken)
+        Task {
+            defer { accountOperationInProgress = false }
+            do {
+                _ = try await c.request("/api/logout", json: [:])
+                guard origin == server else { return }
+                try await credentials.remove(server: origin)
+                accountName = nil
+                status.paired = false; status.history = []; words = []
+                message = "已登出這台電腦。"
+            } catch {
+                if origin == server { message = "登出未完成：\(error.localizedDescription)" }
+            }
+        }
+    }
     func configureHotkey(_ enabled: Bool) { doubleControl = enabled; UserDefaults.standard.set(enabled, forKey: "doubleControl") }
     func configureShortcut(_ value: RecordingShortcut) { shortcut = value; hotkeys.shortcut = value; UserDefaults.standard.set(value.rawValue, forKey: "recordingShortcut") }
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -278,7 +322,7 @@ final class StatusStore: ObservableObject {
             do {
                 let me = try await c.request("/api/me")
                 guard c.base == server else { return }
-                accountName = me["name"] as? String; status.paired = accountName != nil
+                accountName = me["email"] as? String ?? me["name"] as? String; status.paired = accountName != nil
                 let history = await c.history()
                 guard c.base == server else { return }
                 status.history = history
